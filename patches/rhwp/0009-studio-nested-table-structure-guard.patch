@@ -1,0 +1,158 @@
+From 645c12d94b19e41498f70e17f84ebd6ad05bfd20 Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 16:01:19 +0900
+Subject: [PATCH 9/9] =?UTF-8?q?fix(studio):=20=ED=91=9C=20=EC=95=88?=
+ =?UTF-8?q?=EC=9D=98=20=ED=91=9C=EC=97=90=EC=84=9C=20=EA=B5=AC=EC=A1=B0=20?=
+ =?UTF-8?q?=ED=8E=B8=EC=A7=91=EC=9D=B4=20=EB=B0=94=EA=B9=A5=20=ED=91=9C?=
+ =?UTF-8?q?=EB=A5=BC=20=EB=B0=94=EA=BE=B8=EC=A7=80=20=EC=95=8A=EA=B2=8C=20?=
+ =?UTF-8?q?=EB=A7=89=EB=8A=94=EB=8B=A4=20(#8138)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+중첩 표(cellPath 깊이 2+)에서 줄·칸 추가/삭제, 셀 합치기·나누기, 표 지우기,
+표 잘라내기는 바깥 표 좌표만 받는 엔진 API 를 불러 바깥 표에 줄이 생기거나
+바깥 표가 지워졌다. 경로 API 가 생기기 전까지는 실행하지 않고 안내한다.
+표 나누기·붙이기와 Delete 키 경로가 쓰던 기준과 같다.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ rhwp-studio/src/command/commands/table.ts | 24 +++++++++++++++++++++++
+ rhwp-studio/src/engine/input-handler.ts   |  2 ++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
+index 781b389e4..50fe98929 100644
+--- a/rhwp-studio/src/command/commands/table.ts
++++ b/rhwp-studio/src/command/commands/table.ts
+@@ -20,6 +20,18 @@ import {
+ } from '@/ui/table-row-column-dialog';
+ import { t } from '../../i18n/index.ts';
+ import { clampedCellAfterDelete } from '@/engine/table-cell-clamp';
++import { showToast } from '@/ui/toast';
++
++/**
++ * 중첩 표(cellPath 깊이 2+)의 구조 편집은 엔진에 경로 API 가 없어 flat 좌표가 바깥 표를
++ * 가리킨다. 그대로 실행하면 바깥 표에 줄이 생기거나 바깥 표가 지워진다(#8138). 경로 API 가
++ * 생기기 전까지는 막고 알린다. `table:split`·`table:attach` 와 같은 기준이다.
++ */
++function blockNestedTableStructureEdit(cellPath: readonly unknown[] | undefined): boolean {
++  if ((cellPath?.length ?? 0) <= 1) return false;
++  showToast({ message: '표 안의 표에서는 줄·칸 추가/삭제, 셀 합치기·나누기, 표 지우기를 아직 할 수 없습니다.' });
++  return true;
++}
+ const inTable = (ctx: EditorContext) => ctx.inTable;
+ const inTableOrCellSelection = (ctx: EditorContext) => ctx.inTable || ctx.inCellSelectionMode;
+ const hasMultiCellSelection = (ctx: EditorContext) => ctx.hasMultiCellSelection;
+@@ -234,6 +246,7 @@ function applyTableInsertRowColumn(
+   const ctx = currentTableCellContext(services);
+   if (!ctx) return;
+   const { ih, pos, cellInfo } = ctx;
++  if (blockNestedTableStructureEdit(pos.cellPath)) return;
+   safeTableOp(() => ih.executeOperation({
+     kind: 'snapshot',
+     operationType: mode.startsWith('row') ? 'insertTableRow' : 'insertTableColumn',
+@@ -268,6 +281,7 @@ function applyTableDeleteRowColumn(
+   const ctx = currentTableCellContext(services);
+   if (!ctx) return;
+   const { ih, pos, cellInfo } = ctx;
++  if (blockNestedTableStructureEdit(pos.cellPath)) return;
+   safeTableOp(() => ih.executeOperation({
+     kind: 'snapshot',
+     operationType: mode === 'row' ? 'deleteTableRow' : 'deleteTableColumn',
+@@ -452,6 +466,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -472,6 +487,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -492,6 +508,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -512,6 +529,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -532,6 +550,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -552,6 +571,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       const cellInfo = services.wasm.getCellInfo(pos.sectionIndex, pos.parentParaIndex, pos.controlIndex, pos.cellIndex);
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+@@ -574,6 +594,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+ 
+       // F5 셀 선택 모드: 범위 선택 여부 확인
+       const range = ih.getSelectedCellRange?.();
+@@ -627,6 +648,7 @@ export const tableCommands: CommandDef[] = [
+       const tableCtx = ih.getCellTableContext();
+       if (!range || !tableCtx) return;
+       if (range.startRow === range.endRow && range.startCol === range.endCol) return;
++      if (blockNestedTableStructureEdit(tableCtx.cellPath)) return;
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+         operationType: 'mergeTableCells',
+@@ -872,6 +894,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const ref = ih.getSelectedTableRef();
+       if (ref) {
++        if (blockNestedTableStructureEdit(ref.cellPath)) return;
+         safeTableOp(() => ih.executeOperation({
+           kind: 'snapshot',
+           operationType: 'deleteTable',
+@@ -884,6 +907,7 @@ export const tableCommands: CommandDef[] = [
+       }
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined) return;
++      if (blockNestedTableStructureEdit(pos.cellPath)) return;
+       safeTableOp(() => ih.executeOperation({
+         kind: 'snapshot',
+         operationType: 'deleteTable',
+diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
+index 810193af4..e80800b49 100644
+--- a/rhwp-studio/src/engine/input-handler.ts
++++ b/rhwp-studio/src/engine/input-handler.ts
+@@ -5746,6 +5746,8 @@ export class InputHandler {
+         }});
+         this.eventBus.emit('picture-object-selection-changed', false);
+       } else {
++        // 중첩 표는 flat 좌표가 바깥 표를 가리킨다(#8138). Delete 키 경로처럼 지우지 않는다.
++        if (ref.cellPath && ref.cellPath.length > 1) return;
+         this.cursor.moveOutOfSelectedTable();
+         this.executeOperation({ kind: 'snapshot', operationType: 'cutTable', operation: (wasm: WasmBridge) => {
+           wasm.deleteTableControl(ref.sec, ref.ppi, ref.ci);
+-- 
+2.50.1 (Apple Git-155)
+

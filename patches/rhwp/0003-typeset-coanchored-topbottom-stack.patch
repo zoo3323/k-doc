@@ -1,0 +1,342 @@
+From 15c8f26397046a9a45612c1f79df6e1515672681 Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 14:36:35 +0900
+Subject: [PATCH 3/9] =?UTF-8?q?fix(typeset):=20=EA=B0=99=EC=9D=80=20?=
+ =?UTF-8?q?=EB=B9=88=20=EB=AC=B8=EB=8B=A8=EC=9D=98=20=EC=9E=90=EB=A6=AC?=
+ =?UTF-8?q?=EC=B0=A8=EC=A7=80=20=EB=8F=84=ED=98=95=C2=B7=EA=B7=B8=EB=A6=BC?=
+ =?UTF-8?q?=EC=9D=84=20=ED=91=9C=EC=99=80=20=ED=95=A8=EA=BB=98=20=EC=95=B5?=
+ =?UTF-8?q?=EC=BB=A4=20=EC=88=9C=EC=84=9C=EB=8C=80=EB=A1=9C=20=EC=8C=93?=
+ =?UTF-8?q?=EB=8A=94=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+해설지 머리처럼 한 빈 문단에 종이 기준 제목 상자, 표, 둥근 상자, 표가 차례로
+앵커되면 한컴은 컨트롤 순서대로 위에서 아래로 쌓는다(저장 vpos 15682 가 이
+쌓기 결과와 정확히 맞는다). rhwp 는 표만 레인에 쌓고 도형은 빼 둥근 상자가
+표와 겹치거나 순서가 바뀌었다.
+
+- 순서 비교에서 자리차지 도형·그림도 표처럼 선언 순서를 지킨다.
+- 빈 host 문단의 글자처럼 취급하지 않는 자리차지 도형·그림을 레인에
+  등록한다. 문단 기준 개체는 수용한 배치 프레임으로, 쪽·종이 기준 개체는
+  문단 시작을 덮는 띠일 때만 등록한다.
+- 쌓인 개체 아래 빈 문단 자기 줄(줄 높이 + 줄간격)이 쪽 항목에서 빠져 다음
+  문단이 그 줄만큼 위로 붙었다. 저장 사다리가 그 줄만 증언하고 다음 문단에
+  글이 없을 때 그 줄 뒤에서 잇는다. 다음 문단에 글이 있으면 #6147 의 앵커
+  밴드 host 줄 계약이 이미 계상한다.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/renderer/layout.rs                        |  70 +++++++++++
+ src/renderer/typeset/controls/order.rs        |  15 +++
+ .../typeset/controls/paragraph_flow.rs        |  32 +++++
+ src/renderer/typeset/state.rs                 | 114 ++++++++++++++++++
+ 4 files changed, 231 insertions(+)
+
+diff --git a/src/renderer/layout.rs b/src/renderer/layout.rs
+index de5346564..b1800c39e 100644
+--- a/src/renderer/layout.rs
++++ b/src/renderer/layout.rs
+@@ -1674,6 +1674,41 @@ fn para_is_empty_topbottom_table_anchor(para: &Paragraph) -> bool {
+             .any(|ctrl| matches!(ctrl, Control::Table(t) if is_para_topbottom_float(&t.common)))
+ }
+ 
++/// 글자처럼 취급하지 않는 자리차지 개체를 둘 이상 쌓은 빈 문단의 자기 줄 전진폭(px).
++/// 저장 사다리가 그 줄을 개체 아래에 두고(vpos > 0) 다음 문단을 정확히 그 줄 높이 +
++/// 줄간격 뒤에 둘 때만 돌려준다. 다음 문단에 글이 있으면 #6147 의 앵커 밴드 host 줄
++/// 계약(`stored_empty_anchor_band_host_line_advance_hu`)이 이미 그 줄을 계상하므로 쓰지
++/// 않는다 — 여기서는 그 계약이 다루지 않는 빈 후속 문단(해설지 머리 아래 둥근 상자 줄)만 잇는다.
++fn stacked_float_host_line_advance_px(
++    host: &Paragraph,
++    successor: &Paragraph,
++    dpi: f64,
++) -> Option<f64> {
++    if para_has_visible_text(host) || para_has_visible_text(successor) {
++        return None;
++    }
++    let [line] = host.line_segs.as_slice() else {
++        return None;
++    };
++    let mut stacked = 0;
++    for control in &host.controls {
++        let common = match control {
++            Control::Shape(shape) => shape.common(),
++            Control::Table(table) => &table.common,
++            Control::Picture(picture) => &picture.common,
++            _ => continue,
++        };
++        if common.treat_as_char || common.text_wrap != TextWrap::TopAndBottom {
++            return None;
++        }
++        stacked += 1;
++    }
++    let advance = line.line_height + line.line_spacing;
++    let next = successor.line_segs.first()?;
++    (stacked >= 2 && line.vertical_pos > 0 && next.vertical_pos - line.vertical_pos == advance)
++        .then(|| hwpunit_to_px(advance, dpi))
++}
++
+ /// 이 단에 마지막으로 그린 본문 글줄에서 저장 vpos 차이만큼 내려간 줄 시작 y.
+ /// 마지막 글줄이 앞 문단에 속하고 그 vpos 가 이 줄보다 작을 때만(같은 저장 사다리) 쓴다.
+ fn stored_line_top_after_painted(
+@@ -8570,6 +8605,38 @@ impl LayoutEngine {
+                         })
+                         .flatten()
+                 });
++            // 자리차지 개체 여럿을 쌓은 빈 문단은 자기 줄을 개체 아래에 두고 그 줄만큼 흐름을
++            // 전진한다(한컴 저장 사다리: 다음 문단 vpos − 빈 문단 vpos = 줄 높이 + 줄간격).
++            // 쪽 항목에는 개체만 있어 그 줄이 빠지므로 뒤 문단의 원점을 여기서 잇는다.
++            let stacked_float_host_successor_origin = (stored_table_successor_origin.is_none()
++                && !self.profile.get().session_edited()
++                && matches!(
++                    item,
++                    PageItem::FullParagraph { .. }
++                        | PageItem::PartialParagraph { start_line: 0, .. }
++                ))
++            .then(|| {
++                let owner = match item_ordinal
++                    .checked_sub(1)
++                    .and_then(|previous| col_content.items.get(previous))?
++                {
++                    PageItem::Shape { para_index, .. } | PageItem::Table { para_index, .. } => {
++                        *para_index
++                    }
++                    _ => return None,
++                };
++                (owner.checked_add(1) == Some(item_para))
++                    .then(|| {
++                        stacked_float_host_line_advance_px(
++                            paragraphs.get(owner)?,
++                            paragraphs.get(item_para)?,
++                            self.dpi,
++                        )
++                    })
++                    .flatten()
++                    .map(|advance| y_offset + advance)
++            })
++            .flatten();
+             let moved_tac_successor_origin = self
+                 .moved_tac_successor_line
+                 .take()
+@@ -8598,6 +8665,9 @@ impl LayoutEngine {
+                 .map(super::height_cursor::FlowOrigin::Paragraph)
+                 .or_else(|| {
+                     stored_table_successor_origin.map(super::height_cursor::FlowOrigin::Line)
++                })
++                .or_else(|| {
++                    stacked_float_host_successor_origin.map(super::height_cursor::FlowOrigin::Line)
+                 });
+             // [#4613 · #4599 밴드-플로우] 전방 스냅 기각 판정용 — vpos_adjust 이전의 순차 흐름 위치.
+             let y_before_vpos_adjust = y_offset;
+diff --git a/src/renderer/typeset/controls/order.rs b/src/renderer/typeset/controls/order.rs
+index c9ad1964a..029c4be8c 100644
+--- a/src/renderer/typeset/controls/order.rs
++++ b/src/renderer/typeset/controls/order.rs
+@@ -43,6 +43,15 @@ pub(in crate::renderer::typeset) fn stored_cross_column_flow_line(
+         .then_some(line)
+ }
+ 
++/// 비-TAC 자리차지(위아래) 도형·그림 — 표와 같은 순서 축에서 선언 순서를 지킨다.
++fn is_ordered_topbottom_object(common: &crate::model::shape::CommonObjAttr) -> bool {
++    !common.treat_as_char
++        && matches!(
++            common.text_wrap,
++            crate::model::shape::TextWrap::TopAndBottom
++        )
++}
++
+ fn is_whole_flow_table(table: &crate::model::table::Table) -> bool {
+     is_para_topbottom_float(&table.common)
+         && table.common.flow_with_text
+@@ -216,10 +225,16 @@ pub(in crate::renderer::typeset) fn for_paragraph_with_storage<S: crate::storage
+             _ => 0,
+         }
+     };
++    // 같은 문단의 자리차지(위아래) 도형·그림은 비-TAC 표와 같은 키를 받아 선언 순서를
++    // 지킨다. 한/글은 문단 기준 개체를 컨트롤 순서대로 위에서 아래로 쌓고, 쪽·종이 기준
++    // 개체의 밴드도 뒤 형제의 시작점이 된다. 도형을 표 뒤로 보내면 "표 → 상자 → 표"
++    // 머리 구성이 "표 → 표 → 상자"로 뒤집혀 상자가 뒤 표 아래로 밀린다.
+     let table_flow_tiebreak = |ctrl: &Control| -> u8 {
+         match ctrl {
+             Control::Table(t) if !flow.is_effective_tac_table(para, t, fmt) => 0,
+             Control::Table(t) if flow.is_effective_tac_table(para, t, fmt) => 1,
++            Control::Shape(shape) if is_ordered_topbottom_object(shape.common()) => 0,
++            Control::Picture(picture) if is_ordered_topbottom_object(&picture.common) => 0,
+             _ => 1,
+         }
+     };
+diff --git a/src/renderer/typeset/controls/paragraph_flow.rs b/src/renderer/typeset/controls/paragraph_flow.rs
+index 3116a5079..beed1fd11 100644
+--- a/src/renderer/typeset/controls/paragraph_flow.rs
++++ b/src/renderer/typeset/controls/paragraph_flow.rs
+@@ -474,6 +474,17 @@ pub(in crate::renderer::typeset) fn place_with_storage<S: crate::storage::Storag
+                     engine.dpi,
+                     storage,
+                 )?;
++                // 글자 없는 host 의 자리차지 도형도 뒤 형제 부동 표가 피할 lane 에 둔다.
++                if !super::super::para_has_visible_text(para) {
++                    st.register_empty_host_object_lane(
++                        para_idx,
++                        ctrl_idx,
++                        para,
++                        para_start_height,
++                        host_margins(para, composed, styles),
++                        &mut para_float_lanes,
++                    );
++                }
+             }
+             _ => {}
+         }
+@@ -530,3 +541,24 @@ pub(in crate::renderer::typeset) fn place_with_storage<S: crate::storage::Storag
+ 
+     Ok(())
+ }
++
++/// 문단 기준 가로 위치에 쓰는 host 좌우 여백 — 빈 host 부동 표(`empty_float`)와 같은 계산.
++fn host_margins(
++    para: &Paragraph,
++    composed: Option<&crate::renderer::composer::ComposedParagraph>,
++    styles: &crate::renderer::style_resolver::ResolvedStyleSet,
++) -> (f64, f64) {
++    let para_style_id = composed
++        .map(|c| c.para_style_id as usize)
++        .unwrap_or(para.para_shape_id as usize);
++    let para_style = styles.para_styles.get(para_style_id);
++    let margin_left = para_style.map(|s| s.margin_left).unwrap_or(0.0);
++    let indent = para_style.map(|s| s.indent).unwrap_or(0.0);
++    let effective_margin = if indent > 0.0 {
++        margin_left + indent
++    } else {
++        margin_left
++    };
++    let margin_right = para_style.map(|s| s.margin_right).unwrap_or(0.0);
++    (effective_margin, margin_right)
++}
+diff --git a/src/renderer/typeset/state.rs b/src/renderer/typeset/state.rs
+index c90a87112..3d7df34aa 100644
+--- a/src/renderer/typeset/state.rs
++++ b/src/renderer/typeset/state.rs
+@@ -566,6 +566,120 @@ impl TypesetState {
+         Ok(())
+     }
+ 
++    /// 글자 없는 표 host 의 비-TAC 자리차지 도형·그림을 같은 문단의 부동 표 lane 에 넣는다.
++    ///
++    /// 한/글은 같은 문단에 앵커된 자리차지 개체를 컨트롤 순서대로 쌓는다. 표는 lane 으로
++    /// 서로를 피하지만 도형은 흐름 커서로만 전진해서, 도형 뒤에 오는 형제 표가 도형을
++    /// 모른 채 앞 표 바로 아래에 앉아 도형과 겹쳤다.
++    /// - 문단 기준 도형: 조판이 수용한 프레임(위 여백 + 높이 + 아래 여백)을 lane 으로 둔다.
++    /// - 쪽·종이 기준 도형: 바깥 여백 포함 밴드가 문단 시작을 덮을 때만 그 밴드를 lane 으로
++    ///   둔다. 뒤 형제의 문단 기준 원점이 밴드 아래가 된다(한/글 저장 vpos 와 같은 합).
++    pub(super) fn register_empty_host_object_lane(
++        &self,
++        para_idx: usize,
++        ctrl_idx: usize,
++        para: &Paragraph,
++        para_start_height: f64,
++        host_margins: (f64, f64),
++        lanes: &mut FloatLaneSet,
++    ) {
++        use crate::model::shape::{TextWrap, VertRelTo};
++        use crate::renderer::float_placement::{
++            horizontal_range, signed_hwpunit, topbottom_shape_top_margin_hu, FloatPlacementContext,
++            ObjectPlacementFrame, ParagraphFloatFlow,
++        };
++        use crate::renderer::hwpunit_to_px;
++
++        let Some(control) = para.controls.get(ctrl_idx) else {
++            return;
++        };
++        let common = match control {
++            Control::Shape(shape) => shape.common(),
++            Control::Picture(picture) => &picture.common,
++            _ => return,
++        };
++        if common.treat_as_char
++            || common.text_wrap != TextWrap::TopAndBottom
++            || common.allow_overlap
++        {
++            return;
++        }
++        // 다음 단으로 이월된 개체는 이 단의 형제를 밀지 않는다.
++        if !self.data.current_items.iter().any(|item| {
++            matches!(item, PageItem::Shape { para_index, control_index }
++                if *para_index == para_idx && *control_index == ctrl_idx)
++        }) {
++            return;
++        }
++        let dpi = self.data.layout.dpi;
++        let width_px = hwpunit_to_px(signed_hwpunit(common.width), dpi);
++        if width_px <= 0.0 {
++            return;
++        }
++        let column = self
++            .data
++            .layout
++            .column_areas
++            .get(self.data.current_column as usize)
++            .copied()
++            .unwrap_or(self.data.layout.body_area);
++        let placement_ctx = FloatPlacementContext::new(column)
++            .with_body_area(self.data.layout.body_area)
++            .with_paper_width(self.data.layout.page_width)
++            .with_host_margins(host_margins.0, host_margins.1);
++        let (x_start, x_end) = horizontal_range(common, width_px, placement_ctx, dpi);
++        match common.vert_rel_to {
++            VertRelTo::Para => {
++                let Some(frame) = self
++                    .data
++                    .paragraph_float_placements
++                    .get(&(para_idx, ctrl_idx))
++                    .filter(|frame| frame.flow == ParagraphFloatFlow::NextLine)
++                else {
++                    return;
++                };
++                // 수용 프레임의 점유 끝은 아래 여백까지다. 출력은 위 여백만큼 내려가므로
++                // 형제가 피할 상자에 위 여백을 더한다.
++                let top_margin = hwpunit_to_px(topbottom_shape_top_margin_hu(common), dpi);
++                let height = frame.occupied_bottom + top_margin - frame.table_top;
++                lanes.place(Some(ctrl_idx), x_start, x_end, frame.table_top, height);
++            }
++            VertRelTo::Page | VertRelTo::Paper => {
++                let paper = LayoutRect {
++                    x: 0.0,
++                    y: 0.0,
++                    width: self.data.layout.page_width,
++                    height: self.data.layout.page_height,
++                };
++                let frame = ObjectPlacementFrame {
++                    container: &column,
++                    column: &column,
++                    body: &self.data.layout.body_area,
++                    paper: &paper,
++                    paragraph_y: column.y,
++                    alignment: crate::model::style::Alignment::Left,
++                    dpi,
++                };
++                let Some((top, bottom)) = frame.page_anchored_topbottom_band(control) else {
++                    return;
++                };
++                let (top, bottom) = (top - column.y, bottom - column.y);
++                // 문단 시작을 덮는 밴드만 뒤 형제의 시작점이 된다. 쪽 아래쪽 장식 등
++                // 문단 시작과 무관한 밴드는 형제를 그 아래로 끌어내리지 않는다.
++                if top > para_start_height + 0.5 || bottom <= para_start_height + 0.5 {
++                    return;
++                }
++                lanes.place(
++                    Some(ctrl_idx),
++                    x_start,
++                    x_end,
++                    para_start_height,
++                    bottom - para_start_height,
++                );
++            }
++        }
++    }
++
+     /// 현재 단을 비우지 않고 다음 단의 실제 개체 상자만 예약한다.
+     pub(super) fn defer_table_host_shape_to_next_column(
+         &mut self,
+-- 
+2.50.1 (Apple Git-155)
+

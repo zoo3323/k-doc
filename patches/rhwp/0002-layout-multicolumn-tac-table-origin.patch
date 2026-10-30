@@ -1,0 +1,248 @@
+From 0b2819c0afc5ad2bd79aa613f93bca4fb518c96b Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 14:35:58 +0900
+Subject: [PATCH 2/9] =?UTF-8?q?fix(layout):=20=EB=8B=A4=EB=8B=A8=20?=
+ =?UTF-8?q?=EA=B8=80=EC=9E=90=EC=B2=98=EB=9F=BC=20=EC=B7=A8=EA=B8=89=20?=
+ =?UTF-8?q?=ED=91=9C=EA=B0=80=20=EC=9D=B4=EB=AF=B8=20=EA=B7=B8=EB=A6=B0=20?=
+ =?UTF-8?q?=EA=B8=80=EC=A4=84=EC=9D=84=20=EB=8D=AE=EC=A7=80=20=EC=95=8A?=
+ =?UTF-8?q?=EA=B2=8C=20=EC=A0=80=EC=9E=A5=20=EC=82=AC=EB=8B=A4=EB=A6=AC=20?=
+ =?UTF-8?q?=EC=9E=90=EB=A6=AC=EC=97=90=20=EB=91=94=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+조판의 저장 vpos 커서 추적은 단단 전용이라, 다단에서는 조판 커서가 저장
+축보다 뒤처질 수 있다. 그 커서로 확정한 글자처럼 취급 표 원점은 이미 그린 앞
+글줄 위로 올라간다(2단 시험지 `<보기>` 표가 문제 글줄과 55px 겹침, v0.8.7
+이후 devel 회귀).
+
+다단에서 확정 원점이 이 단에 이미 그린 글자 안으로 들어갈 때만 표 줄을
+마지막으로 그린 앞 글줄에서 저장 vpos 차이만큼 내려간 자리에 둔다. 표 뒤
+흐름은 조판 advance 끝 대신 이 줄 시작 + 한 줄 문단의 저장 전진폭(다음 문단
+vpos − 이 문단 vpos)으로 잇고, 표 직후 문단은 저장 스냅을 건너뛰므로 활성
+저장 기준점을 그 자리로 다시 잇는다. 앞 줄의 줄간격 띠 안에 놓이는 확정
+원점(#6970 KTX 셀)은 그대로 쓴다.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/renderer/height_cursor.rs |  21 ++++++
+ src/renderer/layout.rs        | 121 ++++++++++++++++++++++++++++++++--
+ 2 files changed, 137 insertions(+), 5 deletions(-)
+
+diff --git a/src/renderer/height_cursor.rs b/src/renderer/height_cursor.rs
+index 328793d9e..93ff66034 100644
+--- a/src/renderer/height_cursor.rs
++++ b/src/renderer/height_cursor.rs
+@@ -2851,6 +2851,27 @@ impl HeightCursor {
+         Some(col_y + hwpunit_to_px(first_vpos - base, self.dpi))
+     }
+ 
++    /// 저장 첫 줄이 실제로 `line_y` 에 놓인 문단으로 활성 저장 기준점을 다시 잇는다.
++    /// 기준점이 없으면(저장 스냅을 쓰지 않는 흐름) 새로 켜지 않는다.
++    pub(crate) fn rebase_active_vpos_to_line(&mut self, para: &Paragraph, line_y: f64) {
++        let Some(first) = para.line_segs.first() else {
++            return;
++        };
++        let (anchor, page_base) = if self.vpos_page_base.is_some() {
++            (self.col_anchor_y, true)
++        } else if self.vpos_lazy_base.is_some() {
++            (self.col_area_y, false)
++        } else {
++            return;
++        };
++        let base = first.vertical_pos - crate::renderer::px_to_hwpunit(line_y - anchor, self.dpi);
++        if page_base {
++            self.vpos_page_base = Some(base);
++        } else {
++            self.vpos_lazy_base = Some(base);
++        }
++    }
++
+     /// 이미 계산된 vpos 기준 y보다 실제 렌더 y를 아래로 밀었을 때, 후속 항목도
+     /// 같은 시각 기준을 따르도록 활성 vpos base를 반대로 이동한다.
+     pub(crate) fn shift_vpos_base_for_rendered_delta(&mut self, delta_px: f64) {
+diff --git a/src/renderer/layout.rs b/src/renderer/layout.rs
+index 3e3d54379..de5346564 100644
+--- a/src/renderer/layout.rs
++++ b/src/renderer/layout.rs
+@@ -1674,6 +1674,45 @@ fn para_is_empty_topbottom_table_anchor(para: &Paragraph) -> bool {
+             .any(|ctrl| matches!(ctrl, Control::Table(t) if is_para_topbottom_float(&t.common)))
+ }
+ 
++/// 이 단에 마지막으로 그린 본문 글줄에서 저장 vpos 차이만큼 내려간 줄 시작 y.
++/// 마지막 글줄이 앞 문단에 속하고 그 vpos 가 이 줄보다 작을 때만(같은 저장 사다리) 쓴다.
++fn stored_line_top_after_painted(
++    col_node: &RenderNode,
++    para_index: usize,
++    vpos: i32,
++    dpi: f64,
++) -> Option<f64> {
++    let (last_para, last_vpos, last_top) = col_node
++        .children
++        .iter()
++        .filter_map(|node| match &node.node_type {
++            RenderNodeType::TextLine(line) => line
++                .para_index
++                .map(|pi| ((pi, line.line_index.unwrap_or(0)), line.vpos, node.bbox.y)),
++            _ => None,
++        })
++        .max_by_key(|(order, _, _)| *order)
++        .map(|((pi, _), vpos, top)| (pi, vpos, top))?;
++    let last_vpos = last_vpos?;
++    (last_para < para_index && last_vpos < vpos)
++        .then(|| last_top + hwpunit_to_px(vpos - last_vpos, dpi))
++}
++
++/// 한 줄 문단의 저장 전진폭(px): 다음 문단 첫 줄 vpos − 이 문단 줄 vpos.
++/// 다음 문단이 다른 단·쪽에서 사다리를 다시 시작하거나 값이 줄 높이보다 작으면 쓰지 않는다.
++fn stored_single_line_advance_px(
++    para: &Paragraph,
++    next: Option<&Paragraph>,
++    dpi: f64,
++) -> Option<f64> {
++    let [line] = para.line_segs.as_slice() else {
++        return None;
++    };
++    let next_line = next?.line_segs.first()?;
++    let delta = next_line.vertical_pos - line.vertical_pos;
++    (delta >= line.line_height && delta > 0).then(|| hwpunit_to_px(delta, dpi))
++}
++
+ /// 이 단에 이미 그려진 흐름 글자의 최하단 y — 없으면 `None`.
+ ///
+ /// 저장 사다리의 음수 줄간격(`line_spacing < 0`)은 줄 상자를 글자보다 좁게 만든다.
+@@ -3433,6 +3472,9 @@ pub struct LayoutEngine {
+     last_item_content_bottom: std::cell::Cell<f64>,
+     /// 실제 마지막 흐름 줄 상자의 끝. 빈 줄의 점유와 가시 콘텐츠를 구분한다.
+     last_item_flow_line_bottom: std::cell::Cell<f64>,
++    /// 다단에서 확정 원점 대신 저장 사다리 자리로 옮긴 글자처럼 취급 표 문단과, 그 뒤 문단의
++    /// 첫 줄 y. 뒤 문단이 이 자리에서 시작하고 저장 기준점도 이 자리에 다시 잇게 한다.
++    moved_tac_successor_line: std::cell::Cell<Option<(usize, f64)>>,
+     /// 직전 항목의 마지막 미주 줄이 공백 텍스트 + 수식만 가진 tail line-box 인지 여부.
+     /// 이런 줄은 실제 ink보다 line box가 훨씬 커져 item overflow 로그만 남을 수 있다.
+     last_item_endnote_equation_tail_line_box: std::cell::Cell<bool>,
+@@ -3705,6 +3747,7 @@ impl LayoutEngine {
+             layout_table_overlaps: std::cell::RefCell::new(Vec::new()),
+             last_item_content_bottom: std::cell::Cell::new(f64::NAN),
+             last_item_flow_line_bottom: std::cell::Cell::new(f64::NAN),
++            moved_tac_successor_line: std::cell::Cell::new(None),
+             last_item_endnote_equation_tail_line_box: std::cell::Cell::new(false),
+             host_text_content_bottom: std::cell::Cell::new(None),
+             stored_textless_host_end: std::cell::Cell::new(None),
+@@ -8527,6 +8570,30 @@ impl LayoutEngine {
+                         })
+                         .flatten()
+                 });
++            let moved_tac_successor_origin = self
++                .moved_tac_successor_line
++                .take()
++                .filter(|(owner, _)| {
++                    owner.checked_add(1) == Some(item_para)
++                        && matches!(
++                            item,
++                            PageItem::FullParagraph { .. }
++                                | PageItem::PartialParagraph { start_line: 0, .. }
++                        )
++                        && item_ordinal
++                            .checked_sub(1)
++                            .and_then(|previous| col_content.items.get(previous))
++                            .is_some_and(|previous| {
++                                matches!(previous, PageItem::Table { para_index, .. } if para_index == owner)
++                            })
++                })
++                .map(|(_, line_y)| line_y);
++            // 표 직후 문단은 저장 스냅을 건너뛰므로 원점 위임 대신 기준점을 바로 잇는다.
++            if let (Some(line_y), Some(successor)) =
++                (moved_tac_successor_origin, paragraphs.get(item_para))
++            {
++                hcursor.rebase_active_vpos_to_line(successor, line_y);
++            }
+             hcursor.owned_origin = owned_paragraph_origin
+                 .map(super::height_cursor::FlowOrigin::Paragraph)
+                 .or_else(|| {
+@@ -12446,12 +12513,45 @@ impl LayoutEngine {
+         let flow_placement = inline_placement.filter(|placement| placement.owns_vertical_frame());
+         let mut tac_seg_applied = false;
+         let mut para_float_lane_info: Option<(f64, f64, f64, f64, f64, Option<f64>)> = None;
++        // 확정 원점 대신 현재 흐름에 둔 표 문단의 줄 시작. 이 문단의 흐름 끝은 조판 advance
++        // 끝이 아니라 이 줄 시작에서 저장 사다리의 자기 전진폭만큼으로 잇는다.
++        let mut tac_flow_top: Option<f64> = None;
+         if let Some(Control::Table(t)) = para.controls.get(control_index) {
+             if let Some(placement) = flow_placement {
+                 // metadata는 여백 포함 줄의 pen이다. inline_x_override가 있는 표 paint는
+                 // 호출자가 여백을 소비한 테두리 좌표를 받으므로 여기서 한 번 변환한다.
+-                y_offset =
+-                    col_area.y + placement.y + hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
++                let outer_top = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
++                let placed_y = col_area.y + placement.y + outer_top;
++                // 조판의 저장 vpos 커서 추적은 단단 전용이다. 다단에서는 조판 커서가 문단마다
++                // 끝 줄간격을 빼고 쌓아 저장 축보다 뒤처질 수 있고, 그 커서로 확정한 표 원점은
++                // 이미 그린 앞 글줄 위로 올라간다(2단 시험지의 `<보기>` 표가 문제 줄과 55px 겹침).
++                // 다단에서 확정 원점이 이 단에 이미 그린 글자 안으로 들어갈 때만, 마지막으로
++                // 그린 앞 글줄에서 저장 vpos 차이만큼 내려간 자리에 줄을 둔다. 저장 근거가 없으면
++                // 호출부의 흐름 y(앞 간격·바깥 위 여백을 반영한 테두리 위치)를 쓴다. 앞 줄의
++                // 줄간격 띠 안에 놓이는 확정 원점(#6970 KTX 셀)은 그대로 쓴다.
++                let text_bottom = painted_flow_text_bottom(col_node);
++                let cuts_painted_text = *zone_column_count > 1
++                    && text_bottom.is_some_and(|bottom| placed_y < bottom - 0.5);
++                let moved_line_top = cuts_painted_text
++                    .then(|| {
++                        para.line_segs
++                            .first()
++                            .and_then(|seg| {
++                                stored_line_top_after_painted(
++                                    col_node,
++                                    para_index,
++                                    seg.vertical_pos,
++                                    self.dpi,
++                                )
++                            })
++                            .filter(|top| {
++                                text_bottom.is_some_and(|bottom| top + outer_top >= bottom - 0.5)
++                            })
++                            .unwrap_or(y_offset - outer_top)
++                    })
++                    .filter(|top| top + outer_top > placed_y + 0.5);
++                tac_flow_top = moved_line_top;
++                y_offset = moved_line_top.map_or(placed_y, |top| top + outer_top);
+                 tac_table_y_before = y_offset;
+             }
+             let raw_mt = measured_tables
+@@ -14001,6 +14101,17 @@ impl LayoutEngine {
+             // 저장 줄 계획의 pen/advance는 typeset과 동일하다. 표 하단에서 gap을
+             // 다시 추측하거나 위아래 여백을 후가산하지 않는다.
+             if let Some(end) = flow_placement.and_then(|placement| placement.advance_end) {
++                // 조판 advance 끝은 내리기 전 원점 기준이라 내린 표에는 맞지 않는다(표 뒤 간격이
++                // 사라지거나 남는다). 한 줄 문단이면 다음 문단까지의 저장 전진폭을 쓴다.
++                let stored_end = tac_flow_top.and_then(|top| {
++                    stored_single_line_advance_px(para, paragraphs.get(para_index + 1), self.dpi)
++                        .map(|advance| top + advance)
++                });
++                if let Some(successor_line) = stored_end {
++                    self.moved_tac_successor_line
++                        .set(Some((para_index, successor_line)));
++                }
++                let end_y = stored_end.unwrap_or(col_area.y + end);
+                 self.collect_tac_paragraph_fill(
+                     para,
+                     composed.get(para_index),
+@@ -14010,13 +14121,13 @@ impl LayoutEngine {
+                     para_index,
+                     control_index,
+                     para_y_for_table,
+-                    col_area.y + end,
++                    end_y,
+                 );
+                 return TableControlOut {
+-                    y_offset: col_area.y + end,
++                    y_offset: end_y,
+                     tac_seg_applied: true,
+                     para_float_lane_info,
+-                    early_return: Some((col_area.y + end, true)),
++                    early_return: Some((end_y, true)),
+                 };
+             }
+             // ── TAC 표: 줄간격 처리 ──
+-- 
+2.50.1 (Apple Git-155)
+

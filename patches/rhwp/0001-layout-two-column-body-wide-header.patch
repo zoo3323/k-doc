@@ -1,0 +1,181 @@
+From 37795bf7a2f24c0587868409d98ab021324ce439 Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 14:35:20 +0900
+Subject: [PATCH 1/9] =?UTF-8?q?fix(layout):=202=EB=8B=A8=20=EB=AC=B8?=
+ =?UTF-8?q?=EB=8B=A8=20=EA=B8=B0=EC=A4=80=20=EC=A0=84=ED=8F=AD=20=EB=A8=B8?=
+ =?UTF-8?q?=EB=A6=AC=20=ED=91=9C=EB=A5=BC=20=EC=95=B5=EC=BB=A4=20=EB=8B=A8?=
+ =?UTF-8?q?=EC=97=90=EC=84=9C=20=EB=91=90=20=EB=B2=88=20=EB=B0=80=EC=A7=80?=
+ =?UTF-8?q?=20=EC=95=8A=EB=8A=94=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+2단 구역 첫 문단에 앵커된 문단 기준 전폭 자리차지 표는 앵커 단에서 그
+문단이 자기 흐름 위치에 직접 놓는다. 그런데 단 시작을 전폭 예약으로 미리
+밀어 표 높이가 두 번 들어가고 본문이 한 번 더 내려갔다(#8158 형상, 세로
+오프셋 −326 HU 머리 표). 전폭 예약에 문단 기준 여부를 담아 앵커 단에서는
+그 예약을 쓰지 않는다. 다른 단과 쪽·종이 기준 개체는 종전대로 민다.
+
+다른 단의 예약 하단은 표 테두리 하단 + 바깥 아래 여백인데, 문단 기준 표의
+바깥 위 여백을 빼먹어 오른쪽 단이 3.8px 위로 붙었다. 예약에 바깥 위 여백을
+더한다.
+
+Refs #8158
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/renderer/layout.rs              | 36 ++++++++++++++++------
+ src/renderer/layout/shape_layout.rs | 47 ++++++++++++++++++++++++-----
+ 2 files changed, 65 insertions(+), 18 deletions(-)
+
+diff --git a/src/renderer/layout.rs b/src/renderer/layout.rs
+index 8d0f7475d..3e3d54379 100644
+--- a/src/renderer/layout.rs
++++ b/src/renderer/layout.rs
+@@ -6451,15 +6451,16 @@ impl LayoutEngine {
+ 
+         // 다단 레이아웃: body_area 전체에 걸치는 TopAndBottom 개체의 예약 높이
+         // (한 단에만 할당되더라도 모든 단에 적용)
+-        let body_wide_reserved: Vec<(usize, f64)> = if page_content.column_contents.len() > 1 {
+-            self.calculate_body_wide_shape_reserved(
+-                paragraphs,
+-                &page_content.column_contents,
+-                &layout.body_area,
+-            )
+-        } else {
+-            Vec::new()
+-        };
++        let body_wide_reserved: Vec<shape_layout::BodyWideReserve> =
++            if page_content.column_contents.len() > 1 {
++                self.calculate_body_wide_shape_reserved(
++                    paragraphs,
++                    &page_content.column_contents,
++                    &layout.body_area,
++                )
++            } else {
++                Vec::new()
++            };
+ 
+         for (col_content_idx, col_content) in page_content.column_contents.iter().enumerate() {
+             let zone_layout = col_content.zone_layout.as_ref().unwrap_or(layout);
+@@ -7519,7 +7520,7 @@ impl LayoutEngine {
+         col_area: &LayoutRect,
+         outline_numbering_id: u16,
+         wrap_around_paras: &[super::pagination::WrapAroundPara],
+-        body_wide_reserved: &[(usize, f64)],
++        body_wide_reserved: &[shape_layout::BodyWideReserve],
+     ) -> (RenderNode, f64) {
+         let col_node_id = tree.next_id();
+         let mut col_node = RenderNode::new(
+@@ -7548,6 +7549,21 @@ impl LayoutEngine {
+             col_area,
+             &layout.body_area,
+         );
++        // [#8158] 문단 기준 전폭 개체는 앵커 문단이 있는 단에서 그 문단이 자기 흐름 위치에
++        // 직접 놓는다. 이 단의 시작이나 앵커 도달 점프로 다시 밀면 개체와 본문이 개체
++        // 높이만큼 한 번 더 내려간다. 다른 단과 쪽·종이 기준 개체는 종전대로 민다.
++        let body_wide_reserved: Vec<(usize, f64)> = body_wide_reserved
++            .iter()
++            .filter(|reserve| {
++                !(reserve.para_relative
++                    && col_content
++                        .items
++                        .iter()
++                        .any(|item| item.para_index() == reserve.para_index))
++            })
++            .map(|reserve| (reserve.para_index, reserve.bottom_y))
++            .collect();
++        let body_wide_reserved = body_wide_reserved.as_slice();
+         // body_area 전체에 걸치는 개체의 예약 높이 병합 (현재 단에도 반영)
+         for &(pi, bottom_y) in body_wide_reserved {
+             if let Some(existing) = shape_reserved.iter_mut().find(|(p, _)| *p == pi) {
+diff --git a/src/renderer/layout/shape_layout.rs b/src/renderer/layout/shape_layout.rs
+index eb3ffdfed..a36f63946 100644
+--- a/src/renderer/layout/shape_layout.rs
++++ b/src/renderer/layout/shape_layout.rs
+@@ -4896,10 +4896,10 @@ impl LayoutEngine {
+         paragraphs: &[Paragraph],
+         column_contents: &[super::super::pagination::ColumnContent],
+         body_area: &LayoutRect,
+-    ) -> Vec<(usize, f64)> {
++    ) -> Vec<BodyWideReserve> {
+         use crate::model::shape::TextWrap;
+ 
+-        let mut result: Vec<(usize, f64)> = Vec::new();
++        let mut result: Vec<BodyWideReserve> = Vec::new();
+ 
+         for col_content in column_contents {
+             for item in &col_content.items {
+@@ -4931,7 +4931,11 @@ impl LayoutEngine {
+                 if let Some(bottom) = crate::renderer::float_placement::stored_square_top_band(
+                     para, ctrl, body_area, self.dpi,
+                 ) {
+-                    result.push((*para_index, bottom));
++                    result.push(BodyWideReserve {
++                        para_index: *para_index,
++                        bottom_y: bottom,
++                        para_relative: false,
++                    });
+                     continue;
+                 }
+                 if !matches!(common.text_wrap, TextWrap::TopAndBottom) || common.treat_as_char {
+@@ -4959,7 +4963,15 @@ impl LayoutEngine {
+                             );
+                         (bottom, top)
+                     } else {
+-                        self.calc_shape_bottom_y(ctrl, common, body_area, body_area)
++                        // 문단 기준 표는 바깥 위 여백 아래에 테두리를 그린다. 다른 단의 시작은
++                        // 그 테두리 하단 + 바깥 아래 여백이어야 한다(#8158 2단 머리 표: 3.8px).
++                        let (bottom, top) =
++                            self.calc_shape_bottom_y(ctrl, common, body_area, body_area);
++                        let outer_top = hwpunit_to_px(
++                            crate::renderer::float_placement::topbottom_shape_top_margin_hu(common),
++                            self.dpi,
++                        );
++                        (bottom + outer_top, top + outer_top)
+                     }
+                 } else {
+                     self.calc_shape_bottom_y(ctrl, common, body_area, body_area)
+@@ -4973,12 +4985,19 @@ impl LayoutEngine {
+                 if shape_y > threshold_y {
+                     continue;
+                 }
+-                if let Some(existing) = result.iter_mut().find(|(pi, _)| *pi == *para_index) {
+-                    if bottom_y > existing.1 {
+-                        existing.1 = bottom_y;
++                let para_relative = common.vert_rel_to == VertRelTo::Para;
++                if let Some(existing) = result.iter_mut().find(|reserve| {
++                    reserve.para_index == *para_index && reserve.para_relative == para_relative
++                }) {
++                    if bottom_y > existing.bottom_y {
++                        existing.bottom_y = bottom_y;
+                     }
+                 } else {
+-                    result.push((*para_index, bottom_y));
++                    result.push(BodyWideReserve {
++                        para_index: *para_index,
++                        bottom_y,
++                        para_relative,
++                    });
+                 }
+             }
+         }
+@@ -5062,3 +5081,15 @@ mod tests {
+         assert_eq!(para.line_segs[0].segment_width, px_to_hwpunit(80.0, 96.0));
+     }
+ }
++
++/// 다단 쪽에서 본문 폭 전체에 걸치는 자리차지 개체가 단 시작을 미는 높이.
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub(crate) struct BodyWideReserve {
++    /// 개체가 앵커된 문단.
++    pub para_index: usize,
++    /// 바깥 아래 여백까지 포함한 개체 하단 y(px).
++    pub bottom_y: f64,
++    /// 문단 기준(vert=Para) 개체인가. 앵커 문단이 있는 단에서는 그 문단이 자기 흐름
++    /// 위치에 개체를 직접 놓으므로 단 시작을 미리 밀면 높이가 두 번 든다(#8158).
++    pub para_relative: bool,
++}
+-- 
+2.50.1 (Apple Git-155)
+
