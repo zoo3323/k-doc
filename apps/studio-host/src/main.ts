@@ -1,6 +1,7 @@
 import { createBridge, isTauriRuntime } from '@/core/bridge-factory';
 import {
   applyDesktopChromePlatformState,
+  installExternalLinkOpener,
   installNonEditorContextMenuGuards,
 } from '@/core/desktop-chrome';
 import { DocumentDirtyState, EventBus, initThemeSync } from '@/upstream/core';
@@ -86,6 +87,12 @@ async function initialize(): Promise<void> {
     const tauriRuntime = isTauriRuntime();
     desktopPlatform = await hydrateDesktopPlatform();
     applyDesktopChromePlatformState(document, desktopPlatform);
+    if (tauriRuntime) {
+      installExternalLinkOpener(window, async (url) => {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('open_external_url', { url });
+      });
+    }
     msg.textContent = '웹폰트 로딩 중...';
     await loadStoredLocalFonts().catch(() => null);
     await loadWebFonts([]);  // CSS @font-face 등록 + CRITICAL 폰트만 로드

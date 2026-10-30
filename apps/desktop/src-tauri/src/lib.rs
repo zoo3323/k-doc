@@ -23,6 +23,7 @@ use tauri::RunEvent;
 use tauri::{AppHandle, Emitter, Manager};
 
 use commands::{
+    open_external_url,
     cancel_app_quit, check_external_modification, clear_recent_documents, close_document,
     commit_staged_hwp_save, create_document, create_editor_window, desktop_platform,
     destroy_current_window, export_pdf, export_pdf_from_hwp_path, list_local_fonts,
@@ -102,6 +103,7 @@ pub fn run() {
             check_external_modification,
             take_pending_open_paths,
             reveal_in_folder,
+            open_external_url,
             list_recent_documents,
             clear_recent_documents,
             record_recent_document,

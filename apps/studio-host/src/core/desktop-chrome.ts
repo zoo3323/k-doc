@@ -50,3 +50,26 @@ export function normalizeDesktopChromeTitle(
 function hasShortcutTokens(label: string): boolean {
   return /\b(CmdOrCtrl|Cmd|Ctrl|Alt|Option|Shift|Num)\b/i.test(label);
 }
+
+/**
+ * 데스크톱 웹뷰는 `window.open` 으로 새 창을 만들지 않아, 문서 하이퍼링크가 "팝업이
+ * 차단되었습니다"로 끝난다(HOP #111). rhwp-studio 는 `window.open('about:blank')` 뒤
+ * `location.replace(url)` 로 주소를 넘기므로, 그 주소를 받아 기본 브라우저로 연다.
+ */
+export function installExternalLinkOpener(win: Window, openExternal: (url: string) => Promise<void>): void {
+  const forward = (href: unknown) => {
+    const url = String(href ?? '');
+    if (!url || url === 'about:blank') return;
+    void openExternal(url).catch((error) => console.error('[desktop-chrome] 외부 링크 열기 실패:', error));
+  };
+  win.open = ((url?: string | URL) => {
+    forward(url);
+    const location = {
+      replace: forward,
+      assign: forward,
+      get href() { return 'about:blank'; },
+      set href(value: string) { forward(value); },
+    };
+    return { opener: null, closed: false, close() {}, focus() {}, location } as unknown as Window;
+  }) as typeof win.open;
+}

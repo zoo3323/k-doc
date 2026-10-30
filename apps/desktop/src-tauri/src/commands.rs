@@ -304,6 +304,21 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
     open::that(reveal_path).map_err(|e| format!("파일 위치를 열 수 없습니다: {}", e))
 }
 
+/// 문서 하이퍼링크를 기본 브라우저·메일 앱으로 연다. 데스크톱 웹뷰는 새 창을 만들지 않아
+/// rhwp-studio 의 `window.open` 이 "팝업 차단"으로 끝난다(HOP #111). 웹·메일 주소만 허용한다.
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let allowed = ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme));
+    if !allowed || trimmed.chars().any(char::is_control) {
+        return Err("웹(http·https) 또는 메일 주소만 열 수 있습니다.".to_string());
+    }
+    open::that(trimmed).map_err(|e| format!("링크를 열 수 없습니다: {}", e))
+}
+
 #[tauri::command]
 pub fn print_webview(window: WebviewWindow) -> Result<(), String> {
     window
