@@ -7,6 +7,21 @@ type HomeScreenBridge = Partial<Pick<
 >>;
 const RECENT_DOCUMENTS_PER_PAGE = 5;
 
+// 시작 화면 아이콘: 24px 격자, 1.75 선 굵기로 직접 그린 것.
+const HOME_ICONS = {
+  open: '<path d="M3.5 7.5V18a1.5 1.5 0 0 0 1.5 1.5h14a1.5 1.5 0 0 0 1.5-1.5V9.5A1.5 1.5 0 0 0 19 8h-7l-2-2.5H5A1.5 1.5 0 0 0 3.5 7Z"/><path d="M12 11v5.5M9.5 13.5 12 11l2.5 2.5"/>',
+  create: '<path d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8Z"/><path d="M14 3.5V8h4.5M12 11.5v6M9 14.5h6"/>',
+  drop: '<path d="M12 4v10.5M8 10.5l4 4 4-4"/><path d="M4.5 14.5v3A2.5 2.5 0 0 0 7 20h10a2.5 2.5 0 0 0 2.5-2.5v-3"/>',
+} as const;
+
+function homeIcon(name: keyof typeof HOME_ICONS): HTMLElement {
+  const icon = document.createElement('span');
+  icon.className = `home-icon home-icon-${name}`;
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${HOME_ICONS[name]}</svg>`;
+  return icon;
+}
+
 interface HomeScreenActions {
   openFile(): void;
   createNewDocument(): void;
@@ -57,30 +72,41 @@ export class HomeScreen {
     const root = document.createElement('section');
     root.className = 'home-screen';
     root.hidden = true;
-    root.append(this.createHero(), this.createRecentSection(), this.createDropHint());
+    root.append(this.createHero(), this.createDropHint(), this.createRecentSection());
     return root;
   }
 
   private createHero(): HTMLElement {
     const hero = document.createElement('div');
     hero.className = 'home-hero';
+    const brand = document.createElement('div');
+    brand.className = 'home-brand';
+    const logo = document.createElement('img');
+    logo.className = 'home-logo';
+    logo.src = '/app-logo.svg';
+    logo.alt = '';
+    const brandText = document.createElement('div');
     const title = document.createElement('h1');
     title.className = 'home-title';
-    title.textContent = '최근에 작업한 문서를 바로 이어서 열어보세요';
+    title.textContent = '한글 편집기';
     const subtitle = document.createElement('p');
     subtitle.className = 'home-subtitle';
-    subtitle.textContent = 'HWP/HWPX 문서를 열거나 새 문서를 만들고, 드래그 앤 드롭으로 바로 시작할 수 있습니다.';
+    subtitle.textContent = 'HWP·HWPX 문서를 무료로 열고, 고치고, 저장하세요.';
+    brandText.append(title, subtitle);
+    brand.append(logo, brandText);
     const actions = document.createElement('div');
     actions.className = 'home-actions';
+    const openButton = this.createActionButton('open', '문서 열기', 'HWP·HWPX 파일 고르기', () => {
+      this.actions.openFile();
+    });
+    openButton.classList.add('is-primary');
     actions.append(
-      this.createActionButton('문서 열기', '홈 화면에서 파일 선택', () => {
-        this.actions.openFile();
-      }),
-      this.createActionButton('새 문서', '빈 HWP 문서 만들기', () => {
+      openButton,
+      this.createActionButton('create', '새 문서', '빈 문서로 바로 시작', () => {
         this.actions.createNewDocument();
       }),
     );
-    hero.append(title, subtitle, actions);
+    hero.append(brand, actions);
     return hero;
   }
 
@@ -123,21 +149,31 @@ export class HomeScreen {
   private createDropHint(): HTMLElement {
     const dropHint = document.createElement('div');
     dropHint.className = 'home-drop-hint';
-    dropHint.textContent = '파일을 이 창으로 끌어다 놓아도 열 수 있습니다.';
+    const text = document.createElement('span');
+    text.textContent = '파일을 이 창으로 끌어다 놓아도 열려요';
+    dropHint.append(homeIcon('drop'), text);
     return dropHint;
   }
 
-  private createActionButton(label: string, description: string, action: () => void): HTMLButtonElement {
+  private createActionButton(
+    icon: keyof typeof HOME_ICONS,
+    label: string,
+    description: string,
+    action: () => void,
+  ): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'home-action';
+    const text = document.createElement('span');
+    text.className = 'home-action-text';
     const title = document.createElement('span');
     title.className = 'home-action-title';
     title.textContent = label;
     const subtitle = document.createElement('span');
     subtitle.className = 'home-action-description';
     subtitle.textContent = description;
-    button.append(title, subtitle);
+    text.append(title, subtitle);
+    button.append(homeIcon(icon), text);
     button.addEventListener('click', action);
     return button;
   }
@@ -159,13 +195,13 @@ export class HomeScreen {
     this.recentTrack.replaceChildren();
     if (documents.length === 0) {
       this.recentSection.classList.add('is-empty');
-      this.recentHint.textContent = '아직 최근 문서가 없습니다. 문서를 한 번 열면 여기에 바로 나타납니다.';
+      this.recentHint.textContent = '아직 연 문서가 없어요. 한 번 연 문서는 여기에서 바로 다시 열 수 있어요.';
       this.updatePagination();
       return;
     }
 
     this.recentSection.classList.remove('is-empty');
-    this.recentHint.textContent = '앱을 실행하자마자 이어서 작업할 수 있도록 최근에 연 문서를 보여줍니다.';
+    this.recentHint.textContent = '최근에 연 문서예요. 눌러서 이어서 작업하세요.';
 
     const pageStart = this.currentPage * RECENT_DOCUMENTS_PER_PAGE;
     const pageItems = documents.slice(pageStart, pageStart + RECENT_DOCUMENTS_PER_PAGE);
