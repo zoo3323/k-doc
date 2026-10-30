@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "한글 편집기",
   "version": "0.1.0",
-  "identifier": "net.golbin.hop.rhwpfix",
+  "identifier": "io.github.zoo3323.hangul-editor",
   "build": {
     "beforeDevCommand": "cd ../.. && pnpm --filter @golbin/hop-studio-host dev",
     "beforeBuildCommand": "cd ../.. && pnpm run build:studio",
@@ -29,11 +29,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "publisher": "golbin.net",
-    "shortDescription": "rhwp 수정판 엔진을 쓰는 HWP/HWPX 편집기 (HOP 기반)",
-    "longDescription": "HOP is Open HWP. HOP opens, edits, saves, and exports HWP/HWPX documents.",
+    "publisher": "zoo3323",
+    "shortDescription": "HWP·HWPX 문서를 보고 고치는 무료 편집기",
+    "longDescription": "한글 편집기는 HWP·HWPX 문서를 열고 고치고 저장하고 PDF로 내보냅니다. HOP와 rhwp(MIT)를 바탕으로 만들었습니다.",
     "category": "Productivity",
-    "copyright": "Copyright (c) 2026 HOP contributors",
+    "copyright": "Copyright (c) 2026 HOP contributors, rhwp contributors, zoo3323",
     "icon": [
       "icons-hangul/logo-32.png",
       "icons-hangul/logo-128.png",
@@ -57,12 +57,12 @@
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
-          "net.golbin.hop.rhwpfix.hwp",
+          "io.github.zoo3323.hangul-editor.hwp",
           "com.hancom.hwp",
           "com.haansoft.hancomofficeviewer.mac.hwp"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.rhwpfix.hwp",
+          "identifier": "io.github.zoo3323.hangul-editor.hwp",
           "conformsTo": [
             "public.data"
           ]
@@ -78,12 +78,12 @@
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
-          "net.golbin.hop.rhwpfix.hwpx",
+          "io.github.zoo3323.hangul-editor.hwpx",
           "com.hancom.hwpx",
           "com.haansoft.hancomofficeviewer.mac.hwpx"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.rhwpfix.hwpx",
+          "identifier": "io.github.zoo3323.hangul-editor.hwpx",
           "conformsTo": [
             "public.data",
             "public.zip-archive"

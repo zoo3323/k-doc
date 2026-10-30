@@ -7,7 +7,7 @@ export class AboutDialog extends UpstreamAboutDialog {
 
     const hopVersion = document.createElement('div');
     hopVersion.className = 'about-hop-version';
-    hopVersion.textContent = `HOP ${__HOP_VERSION__}`;
+    hopVersion.textContent = `한글 편집기 ${__HOP_VERSION__} · HOP 0.4.5 기반`;
 
     if (version?.parentNode) {
       version.parentNode.insertBefore(hopVersion, version.nextSibling);

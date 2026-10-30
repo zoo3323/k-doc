@@ -165,7 +165,7 @@ describe('file command desktop overrides', () => {
   it('keeps PDF export desktop-only', async () => {
     await command('file:export-pdf').execute(services({ wasm: {} }) as never);
 
-    expect(globalThis.alert).toHaveBeenCalledWith('PDF 내보내기는 HOP 데스크톱 앱에서 지원합니다.');
+    expect(globalThis.alert).toHaveBeenCalledWith('PDF 내보내기는 한글 편집기 데스크톱 앱에서 지원합니다.');
   });
 
   it('reports desktop PDF export failures', async () => {
