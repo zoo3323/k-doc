@@ -102,6 +102,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # package.json 의 packageManager 를 보고 pnpm 캐시를 켜면 pnpm 설치 전이라 실패한다.
+          package-manager-cache: false
 
       - name: pnpm
         run: npm install -g pnpm@${{ env.PNPM_VERSION }}
