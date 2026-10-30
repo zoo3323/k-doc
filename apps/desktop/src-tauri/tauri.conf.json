@@ -1,18 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "HOP",
+  "productName": "한글 편집기",
   "version": "0.4.5",
-  "identifier": "net.golbin.hop",
+  "identifier": "net.golbin.hop.rhwpfix",
   "build": {
     "beforeDevCommand": "cd ../.. && pnpm --filter @golbin/hop-studio-host dev",
-    "beforeBuildCommand": "cd ../.. && pnpm run build:before-tauri",
+    "beforeBuildCommand": "cd ../.. && pnpm run build:studio",
     "devUrl": "http://127.0.0.1:7700",
     "frontendDist": "../../studio-host/dist"
   },
   "app": {
     "windows": [
       {
-        "title": "HOP",
+        "title": "한글 편집기",
         "label": "main",
         "url": "index.html",
         "width": 1280,
@@ -28,19 +28,21 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app"
+    ],
     "publisher": "golbin.net",
-    "shortDescription": "Open desktop editor for HWP and HWPX documents",
+    "shortDescription": "rhwp 수정판 엔진을 쓰는 HWP/HWPX 편집기 (HOP 기반)",
     "longDescription": "HOP is Open HWP. HOP opens, edits, saves, and exports HWP/HWPX documents.",
     "category": "Productivity",
     "copyright": "Copyright (c) 2026 HOP contributors",
     "icon": [
-      "../../../assets/logo/logo-32.png",
-      "../../../assets/logo/logo-128.png",
-      "../../../assets/logo/logo-256.png",
-      "../../../assets/logo/logo-512.png",
-      "../../../assets/logo/icon.icns",
-      "../../../assets/logo/favicon.ico"
+      "icons-hangul/logo-32.png",
+      "icons-hangul/logo-128.png",
+      "icons-hangul/logo-256.png",
+      "icons-hangul/logo-512.png",
+      "icons-hangul/icon.icns",
+      "icons-hangul/favicon.ico"
     ],
     "resources": {
       "../../../third_party/rhwp/ttfs/opensource/NotoSansKR-Regular.ttf": "fonts/pdf/NotoSansKR-Regular.ttf",
@@ -48,46 +50,51 @@
     },
     "fileAssociations": [
       {
-        "ext": ["hwp"],
+        "ext": [
+          "hwp"
+        ],
         "name": "HWP Document",
         "description": "Hangul Word Processor document",
         "mimeType": "application/x-hwp",
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
-          "net.golbin.hop.hwp",
+          "net.golbin.hop.rhwpfix.hwp",
           "com.hancom.hwp",
           "com.haansoft.hancomofficeviewer.mac.hwp"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.hwp",
-          "conformsTo": ["public.data"]
+          "identifier": "net.golbin.hop.rhwpfix.hwp",
+          "conformsTo": [
+            "public.data"
+          ]
         }
       },
       {
-        "ext": ["hwpx"],
+        "ext": [
+          "hwpx"
+        ],
         "name": "HWPX Document",
         "description": "Hangul Word Processor XML document",
         "mimeType": "application/vnd.hancom.hwpx",
         "role": "Editor",
         "rank": "Owner",
         "contentTypes": [
-          "net.golbin.hop.hwpx",
+          "net.golbin.hop.rhwpfix.hwpx",
           "com.hancom.hwpx",
           "com.haansoft.hancomofficeviewer.mac.hwpx"
         ],
         "exportedType": {
-          "identifier": "net.golbin.hop.hwpx",
-          "conformsTo": ["public.data", "public.zip-archive"]
+          "identifier": "net.golbin.hop.rhwpfix.hwpx",
+          "conformsTo": [
+            "public.data",
+            "public.zip-archive"
+          ]
         }
       }
     ],
     "macOS": {
-      "minimumSystemVersion": "12.0",
-      "files": {
-        "PlugIns/HopQuickLookPreview.appex": "target/quicklook/PlugIns/HopQuickLookPreview.appex",
-        "PlugIns/HopQuickLookThumbnail.appex": "target/quicklook/PlugIns/HopQuickLookThumbnail.appex"
-      }
+      "minimumSystemVersion": "12.0"
     },
     "windows": {
       "wix": {
@@ -99,7 +106,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZGQzA1Qzc3QkQ0ODhFM0YKUldRL2praTlkMXpBL3pTcUFUczdzWFBFSjV3QnBPczhJTy8zMG5OcVhYNi9sbDJtRS9JY2wxN00K",
       "endpoints": [
-        "https://github.com/golbin/hop/releases/latest/download/latest.json"
+        "https://127.0.0.1:9/hop-rhwpfix-updates-disabled.json"
       ],
       "windows": {
         "installMode": "passive"
