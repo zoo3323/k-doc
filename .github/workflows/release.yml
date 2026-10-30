@@ -1,0 +1,185 @@
+name: release
+
+# v* 태그를 올리면 macOS(Apple 칩·인텔)·Windows·Linux 설치 파일을 만들어 Releases 에 올린다.
+# 수동 실행(workflow_dispatch)은 설치 파일만 만들고 Actions 아티팩트로 남긴다.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10.33.0'
+  RUST_TOOLCHAIN: '1.93.1'
+  WASM_PACK_VERSION: '0.15.0'
+
+jobs:
+  wasm:
+    name: rhwp WASM 엔진
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: rhwp 받기와 패치
+        run: scripts/prepare-rhwp.sh
+
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - name: wasm-pack
+        run: |
+          name="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL --retry 5 -o /tmp/wasm-pack.tgz \
+            "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${name}.tar.gz"
+          tar -xzf /tmp/wasm-pack.tgz -C /tmp
+          sudo mv "/tmp/${name}/wasm-pack" /usr/local/bin/wasm-pack
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/rhwp -> target
+          key: wasm
+
+      - name: WASM 빌드
+        working-directory: third_party/rhwp
+        run: scripts/wasm-pack-locked.sh --target web --out-dir pkg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rhwp-pkg
+          path: third_party/rhwp/pkg/
+          retention-days: 3
+
+  build:
+    name: 앱 ${{ matrix.name }}
+    needs: wasm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, bundles: 'app,dmg' }
+          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin, bundles: 'app,dmg' }
+          - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, bundles: nsis }
+          - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, bundles: 'deb,appimage' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Linux 빌드 패키지
+        if: runner.os == 'Linux'
+        run: |
+          fuse_package="libfuse2"
+          if apt-cache show libfuse2t64 >/dev/null 2>&1; then fuse_package="libfuse2t64"; fi
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl file libayatana-appindicator3-dev \
+            "$fuse_package" libgtk-3-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev \
+            libxdo-dev patchelf wget
+
+      - name: rhwp 받기와 패치
+        shell: bash
+        run: scripts/prepare-rhwp.sh
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: rhwp-pkg
+          path: third_party/rhwp/pkg
+
+      - name: WASM 엔진 넣기
+        shell: bash
+        run: |
+          for f in rhwp.js rhwp_bg.wasm rhwp.d.ts rhwp_bg.wasm.d.ts package.json; do
+            cp "third_party/rhwp/pkg/$f" "apps/studio-host/vendor/rhwp-core/$f"
+          done
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: Rust
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target "${{ matrix.target }}"
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: ${{ matrix.name }}
+
+      - name: 의존성 설치
+        run: pnpm install --frozen-lockfile
+
+      - name: 앱 빌드
+        shell: bash
+        run: pnpm --filter hop-desktop tauri build --target "${{ matrix.target }}" --bundles "${{ matrix.bundles }}"
+
+      - name: 설치 파일 이름 정리
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="apps/desktop/src-tauri/target/${{ matrix.target }}/release/bundle"
+          mkdir -p out
+          case "${{ matrix.name }}" in
+            macos-*)
+              cp "$(ls "$bundle"/dmg/*.dmg | head -1)" "out/hangul-editor-${{ matrix.name }}.dmg"
+              ditto -c -k --keepParent "$(ls -d "$bundle"/macos/*.app | head -1)" "out/hangul-editor-${{ matrix.name }}.zip"
+              ;;
+            windows-*)
+              cp "$(ls "$bundle"/nsis/*-setup.exe | head -1)" "out/hangul-editor-${{ matrix.name }}-setup.exe"
+              ;;
+            linux-*)
+              cp "$(ls "$bundle"/deb/*.deb | head -1)" "out/hangul-editor-${{ matrix.name }}.deb"
+              cp "$(ls "$bundle"/appimage/*.AppImage | head -1)" "out/hangul-editor-${{ matrix.name }}.AppImage"
+              ;;
+          esac
+          ls -la out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          path: out/*
+          retention-days: 7
+
+  release:
+    name: Releases 에 올리기
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          path: out
+          pattern: '*-*64'
+          merge-multiple: true
+
+      - name: 설치 스크립트도 함께 올리기
+        run: cp install/install-mac.sh install/install-linux.sh install/install-windows.ps1 out/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: 한글 편집기 ${{ github.ref_name }}
+          files: out/*
+          body: |
+            ## 내려받기
+
+            | 운영체제 | 파일 |
+            | --- | --- |
+            | 🍎 macOS (M1·M2·M3·M4) | `hangul-editor-macos-arm64.dmg` |
+            | 🍎 macOS (인텔) | `hangul-editor-macos-x64.dmg` |
+            | 🪟 Windows | `hangul-editor-windows-x64-setup.exe` |
+            | 🐧 Linux | `hangul-editor-linux-x64.deb` · `.AppImage` |
+
+            처음 실행할 때 보안 경고가 나오면 [설치 안내](https://github.com/${{ github.repository }}#설치)를 보세요.
