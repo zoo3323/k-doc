@@ -60,9 +60,31 @@ function enhanceCustomSelect(select: HTMLSelectElement): void {
   root.append(trigger, menu, select);
   select.classList.add('native-select-hidden');
 
+  // 툴바·상자의 overflow: hidden 이 목록을 잘라 "열리지 않는" 것처럼 보였다(HOP #106·#119).
+  // 열 때 버튼 위치에 맞춰 화면 기준(fixed)으로 띄워 잘라내는 부모 영역을 벗어난다.
+  const placeMenu = () => {
+    const rect = trigger.getBoundingClientRect();
+    const top = rect.bottom + 1;
+    menu.style.position = 'fixed';
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.minWidth = `${rect.width}px`;
+    const viewHeight = document.defaultView?.innerHeight ?? 800;
+    menu.style.maxHeight = `${Math.max(120, Math.min(260, viewHeight - top - 8))}px`;
+    // transform 이 걸린 조상 안에서는 fixed 기준이 그 조상이라 실제 위치와의 차이를 보정한다.
+    const placed = menu.getBoundingClientRect();
+    const dx = placed.left - rect.left;
+    const dy = placed.top - top;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      menu.style.left = `${rect.left - dx}px`;
+      menu.style.top = `${top - dy}px`;
+    }
+  };
+
   const close = () => {
     root.classList.remove('open');
     trigger.setAttribute('aria-expanded', 'false');
+    menu.style.cssText = '';
   };
 
   const open = () => {
@@ -71,6 +93,8 @@ function enhanceCustomSelect(select: HTMLSelectElement): void {
     sync();
     root.classList.add('open');
     trigger.setAttribute('aria-expanded', 'true');
+    placeMenu();
+    menu.querySelector<HTMLElement>('.custom-select-option.selected')?.scrollIntoView({ block: 'nearest' });
   };
 
   const toggle = () => {
@@ -158,6 +182,13 @@ function enhanceCustomSelect(select: HTMLSelectElement): void {
   document.addEventListener('mousedown', (event) => {
     if (!root.contains(event.target as Node)) close();
   });
+  // 화면에 고정해 띄운 목록이 버튼과 어긋나지 않도록 창 크기 변경·바깥 스크롤 때 닫는다.
+  document.defaultView?.addEventListener('resize', () => {
+    if (root.classList.contains('open')) close();
+  });
+  document.addEventListener('scroll', (event) => {
+    if (root.classList.contains('open') && !menu.contains(event.target as Node)) close();
+  }, true);
 
   const observer = new MutationObserver(() => {
     rebuildMenu();
