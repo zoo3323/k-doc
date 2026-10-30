@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 한글 편집기 데스크톱 앱을 이 컴퓨터에서 빌드한다(macOS·Linux).
+# K-Doc 데스크톱 앱을 이 컴퓨터에서 빌드한다(macOS·Linux).
 #
 # 1. scripts/prepare-rhwp.sh 로 upstream rhwp 를 받고 패치를 적용한다.
 # 2. 패치한 rhwp 로 WASM 을 빌드해 rhwp pkg/ 와 studio-host vendor 에 넣는다.

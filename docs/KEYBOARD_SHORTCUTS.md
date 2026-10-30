@@ -15,7 +15,7 @@ that use **Alt**, macOS users should use **Option (⌥)**.
 | Cmd/Ctrl+Shift+S | Save As |
 | Cmd/Ctrl+P | Print |
 | F7 | Page Setup |
-| Cmd/Ctrl+Q | Quit 한글 편집기 |
+| Cmd/Ctrl+Q | Quit K-Doc |
 
 ## Edit
 

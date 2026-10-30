@@ -537,7 +537,7 @@ impl DocumentSession {
             return Ok(ExternalModificationStatus {
                 changed: true,
                 source_path: Some(source_path.to_string_lossy().to_string()),
-                reason: Some("원본 파일이 한글 편집기 밖에서 변경되었습니다".to_string()),
+                reason: Some("원본 파일이 K-Doc 밖에서 변경되었습니다".to_string()),
             });
         }
 

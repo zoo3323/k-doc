@@ -88,7 +88,7 @@ export class HomeScreen {
     const brandText = document.createElement('div');
     const title = document.createElement('h1');
     title.className = 'home-title';
-    title.textContent = '한글 편집기';
+    title.textContent = 'K-Doc';
     const subtitle = document.createElement('p');
     subtitle.className = 'home-subtitle';
     subtitle.textContent = 'HWP·HWPX 문서를 무료로 열고, 고치고, 저장하세요.';

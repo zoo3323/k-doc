@@ -13,7 +13,7 @@
     </filter>
   </defs>
 
-  <!-- macOS 아이콘 격자: 1024 캔버스, 824 둥근 사각형 -->
+  <!-- K-Doc 앱 아이콘. macOS 격자: 1024 캔버스, 824 둥근 사각형 -->
   <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
 
   <!-- 문서 한 장 (오른쪽 위 접힌 모서리) -->
@@ -22,19 +22,15 @@
     <path d="M620 220 V300 Q620 324 644 324 H724 Z" fill="#C9D6E6"/>
   </g>
 
-  <!-- '한' : ㅎ + ㅏ + ㄴ 을 기하 도형으로 -->
-  <g fill="#1E3A8A">
-    <!-- ㅎ -->
-    <rect x="388" y="300" width="92" height="30" rx="15"/>
-    <rect x="344" y="350" width="180" height="32" rx="16"/>
-    <circle cx="434" cy="462" r="62"/>
-    <circle cx="434" cy="462" r="30" fill="url(#paper)"/>
-    <!-- ㅏ -->
-    <rect x="568" y="296" width="36" height="250" rx="18"/>
-    <rect x="590" y="404" width="64" height="32" rx="16"/>
-    <!-- ㄴ -->
-    <rect x="356" y="584" width="36" height="150" rx="18"/>
-    <rect x="356" y="698" width="300" height="36" rx="18"/>
+  <!-- 'K' -->
+  <g stroke="#1E3A8A" stroke-linecap="round" fill="none">
+    <path d="M392 318 V606" stroke-width="58"/>
+    <path d="M598 318 L428 466 L604 606" stroke-width="56" stroke-linejoin="round"/>
+  </g>
+  <!-- 문서 줄 -->
+  <g fill="#C9D6E6">
+    <rect x="352" y="680" width="260" height="24" rx="12"/>
+    <rect x="352" y="732" width="180" height="24" rx="12"/>
   </g>
 
   <!-- 편집을 뜻하는 연필 -->

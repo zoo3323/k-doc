@@ -207,7 +207,7 @@ const hopOnlyCommands: CommandDef[] = [
     async execute(services) {
       const desktop = desktopBridge(services.wasm);
       if (!desktop) {
-        alert('PDF 내보내기는 한글 편집기 데스크톱 앱에서 지원합니다.');
+        alert('PDF 내보내기는 K-Doc 데스크톱 앱에서 지원합니다.');
         return;
       }
 

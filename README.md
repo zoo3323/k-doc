@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="apps/desktop/src-tauri/icons-hangul/logo-256.png" width="112" alt="">
+<img src="apps/desktop/src-tauri/icons-app/logo-256.png" width="112" alt="">
 
-# 한글 편집기
+# K-Doc
 
 ### 한글 문서(HWP·HWPX)를 **무료로** 열고 고치세요
 
@@ -13,12 +13,16 @@
 
 <br><br>
 
-<a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-macos-arm64.dmg"><img src="https://img.shields.io/badge/macOS-Apple_%EC%B9%A9-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple 칩"></a>
-<a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-macos-x64.dmg"><img src="https://img.shields.io/badge/macOS-%EC%9D%B8%ED%85%94-4B5563?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 인텔"></a>
-<a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Windows-%EB%82%B4%EB%A0%A4%EB%B0%9B%EA%B8%B0-2563EB?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
-<a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-linux-x64.deb"><img src="https://img.shields.io/badge/Linux-.deb-F59E0B?style=for-the-badge&logo=linux&logoColor=white" alt="Linux"></a>
+**👇 내 컴퓨터에 맞는 버튼을 누르세요**
 
-<img src="docs/images/app.png" width="920" alt="한글 편집기로 HWP 문서를 연 화면">
+<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-macos-arm64.dmg"><img src="https://img.shields.io/badge/macOS-Apple_%EC%B9%A9-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple 칩"></a>
+<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-macos-x64.dmg"><img src="https://img.shields.io/badge/macOS-%EC%9D%B8%ED%85%94-4B5563?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 인텔"></a>
+<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Windows-%EB%82%B4%EB%A0%A4%EB%B0%9B%EA%B8%B0-2563EB?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
+<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-linux-x64.deb"><img src="https://img.shields.io/badge/Linux-.deb-F59E0B?style=for-the-badge&logo=linux&logoColor=white" alt="Linux"></a>
+
+<sub>Mac 칩을 모르면: 왼쪽 위 사과 메뉴 → 이 Mac에 관하여 → '칩'이 Apple M이면 Apple 칩</sub>
+
+<img src="docs/images/app.png" width="920" alt="K-Doc으로 HWP 문서를 연 화면">
 
 </div>
 
@@ -44,42 +48,51 @@
 
 ## 📥 설치
 
-<img src="docs/images/install-steps.png" alt="내려받기 → 열기 → 끝">
+<img src="docs/images/install-steps.png" alt="내려받기 → 설치 → 끝">
 
-**한 줄로 설치** — 복사해서 붙여넣기만 하면 됩니다.
+| | 받은 파일 | 이렇게 하세요 |
+| :---: | --- | --- |
+| 🍎 | `.dmg` | 더블클릭 → **K-Doc**을 **응용 프로그램** 폴더로 끌어 놓기 |
+| 🪟 | `-setup.exe` | 더블클릭 → **설치** |
+| 🐧 | `.deb` | 더블클릭 → **설치** |
 
-🍎 macOS · 터미널
+### ⚠️ 처음 열 때 경고가 나오면
+
+개인이 만든 무료 앱이라 유료 인증서가 없어서 **처음 한 번만** 나옵니다.
+
+**🍎 macOS**
+
+<img src="docs/images/first-run-mac.png" alt="완료 → 시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기">
+
+**🪟 Windows**
+
+<img src="docs/images/first-run-windows.png" alt="추가 정보 → 실행">
+
+<details>
+<summary>⌨️ 터미널이 익숙하다면: 한 줄 설치 (경고 없음)</summary>
+
+🍎 macOS
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zoo3323/hangul-editor/main/install/install-mac.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zoo3323/k-doc/main/install/install-mac.sh | bash
 ```
 
 🪟 Windows · PowerShell
 
 ```powershell
-irm https://raw.githubusercontent.com/zoo3323/hangul-editor/main/install/install-windows.ps1 | iex
+irm https://raw.githubusercontent.com/zoo3323/k-doc/main/install/install-windows.ps1 | iex
 ```
 
-🐧 Linux · 터미널
+🐧 Linux
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zoo3323/hangul-editor/main/install/install-linux.sh | bash
+curl -fsSL https://raw.githubusercontent.com/zoo3323/k-doc/main/install/install-linux.sh | bash
 ```
-
-<details>
-<summary>⚠️ 처음 열 때 경고가 나오면</summary>
-
-| | 이렇게 하세요 |
-| --- | --- |
-| 🍎 macOS | **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기** |
-| 🪟 Windows | **추가 정보 → 실행** |
-
-개인이 만든 무료 앱이라 유료 인증서가 없어 한 번 나오는 경고입니다. 한 줄 설치를 쓰면 나오지 않습니다.
 </details>
 
 ## 🛠️ HOP·rhwp의 문제를 고쳤습니다
 
-원래 오픈소스 [HOP](https://github.com/golbin/hop)과 [rhwp](https://github.com/edwardkim/rhwp)에서 알려진 주요 문제를 고쳐 넣었습니다.
+오픈소스 [HOP](https://github.com/golbin/hop)과 [rhwp](https://github.com/edwardkim/rhwp)를 바탕으로, 알려진 주요 문제를 고쳐 넣었습니다.
 
 | | 고친 문제 | 원래 |
 | :---: | --- | :---: |
@@ -122,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/zoo3323/hangul-editor/main/install/
 필요한 것: rustup(`wasm32-unknown-unknown`), wasm-pack 0.15, Node 22+, pnpm 10
 
 ```sh
-scripts/build-hangul-editor.sh
+scripts/build-k-doc.sh
 ```
 
 설치 파일은 `v*` 태그를 올리면 [GitHub Actions](.github/workflows/release.yml)가 macOS·Windows·Linux 용으로 만듭니다.
@@ -130,6 +143,8 @@ scripts/build-hangul-editor.sh
 
 <div align="center">
 <sub>
-<a href="https://github.com/golbin/hop">HOP</a>와 <a href="https://github.com/edwardkim/rhwp">rhwp</a>(모두 MIT)를 바탕으로 만든 개인 프로젝트입니다 · 한글과컴퓨터와 관계없습니다
+<a href="https://github.com/golbin/hop">HOP</a>와 <a href="https://github.com/edwardkim/rhwp">rhwp</a>(모두 MIT)를 바탕으로 만든 개인 프로젝트입니다 · <a href="NOTICE.md">라이선스·고지</a><br>
+본 제품은 한글과컴퓨터의 한글 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.<br>
+"한글", "한컴", "HWP", "HWPX"는 주식회사 한글과컴퓨터의 등록 상표이며, K-Doc은 한글과컴퓨터와 관계없습니다.
 </sub>
 </div>

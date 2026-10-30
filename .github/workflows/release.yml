@@ -134,15 +134,15 @@ jobs:
           mkdir -p out
           case "${{ matrix.name }}" in
             macos-*)
-              cp "$(ls "$bundle"/dmg/*.dmg | head -1)" "out/hangul-editor-${{ matrix.name }}.dmg"
-              ditto -c -k --keepParent "$(ls -d "$bundle"/macos/*.app | head -1)" "out/hangul-editor-${{ matrix.name }}.zip"
+              cp "$(ls "$bundle"/dmg/*.dmg | head -1)" "out/k-doc-${{ matrix.name }}.dmg"
+              ditto -c -k --keepParent "$(ls -d "$bundle"/macos/*.app | head -1)" "out/k-doc-${{ matrix.name }}.zip"
               ;;
             windows-*)
-              cp "$(ls "$bundle"/nsis/*-setup.exe | head -1)" "out/hangul-editor-${{ matrix.name }}-setup.exe"
+              cp "$(ls "$bundle"/nsis/*-setup.exe | head -1)" "out/k-doc-${{ matrix.name }}-setup.exe"
               ;;
             linux-*)
-              cp "$(ls "$bundle"/deb/*.deb | head -1)" "out/hangul-editor-${{ matrix.name }}.deb"
-              cp "$(ls "$bundle"/appimage/*.AppImage | head -1)" "out/hangul-editor-${{ matrix.name }}.AppImage"
+              cp "$(ls "$bundle"/deb/*.deb | head -1)" "out/k-doc-${{ matrix.name }}.deb"
+              cp "$(ls "$bundle"/appimage/*.AppImage | head -1)" "out/k-doc-${{ matrix.name }}.AppImage"
               ;;
           esac
           ls -la out
@@ -172,16 +172,16 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          name: 한글 편집기 ${{ github.ref_name }}
+          name: K-Doc ${{ github.ref_name }}
           files: out/*
           body: |
             ## 내려받기
 
             | 운영체제 | 파일 |
             | --- | --- |
-            | 🍎 macOS (M1·M2·M3·M4) | `hangul-editor-macos-arm64.dmg` |
-            | 🍎 macOS (인텔) | `hangul-editor-macos-x64.dmg` |
-            | 🪟 Windows | `hangul-editor-windows-x64-setup.exe` |
-            | 🐧 Linux | `hangul-editor-linux-x64.deb` · `.AppImage` |
+            | 🍎 macOS (M1·M2·M3·M4) | `k-doc-macos-arm64.dmg` |
+            | 🍎 macOS (인텔) | `k-doc-macos-x64.dmg` |
+            | 🪟 Windows | `k-doc-windows-x64-setup.exe` |
+            | 🐧 Linux | `k-doc-linux-x64.deb` · `.AppImage` |
 
             처음 실행할 때 보안 경고가 나오면 [설치 안내](https://github.com/${{ github.repository }}#설치)를 보세요.

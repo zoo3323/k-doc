@@ -21,7 +21,7 @@ fi
 if ! git -C "$RHWP" log -12 --format=%s | grep -qF "$MARKER"; then
   echo "[rhwp] 패치 적용"
   git -C "$RHWP" checkout -q "$BASE"
-  git -C "$RHWP" -c user.name="hangul-editor" -c user.email="hangul-editor@localhost" \
+  git -C "$RHWP" -c user.name="k-doc" -c user.email="k-doc@localhost" \
     -c core.autocrlf=false am --3way "$ROOT"/patches/rhwp/*.patch
 fi
 echo "[rhwp] $(git -C "$RHWP" log -1 --format='%h %s')"
