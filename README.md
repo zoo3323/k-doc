@@ -1,24 +1,46 @@
 <div align="center">
 
-<img src="apps/desktop/src-tauri/icons-hangul/logo-256.png" width="120" alt="">
+<img src="apps/desktop/src-tauri/icons-hangul/logo-256.png" width="112" alt="">
 
 # 한글 편집기
 
-**HWP · HWPX 문서를 보고 고치는 무료 편집기**
+### 한글 문서(HWP·HWPX)를 **무료로** 열고 고치세요
+
+<img src="https://img.shields.io/badge/%EA%B0%80%EA%B2%A9-0%EC%9B%90-16a34a?style=flat-square" alt="가격 0원">
+<img src="https://img.shields.io/badge/%EA%B4%91%EA%B3%A0-%EC%97%86%EC%9D%8C-0ea5e9?style=flat-square" alt="광고 없음">
+<img src="https://img.shields.io/badge/%ED%9A%8C%EC%9B%90%EA%B0%80%EC%9E%85-%ED%95%84%EC%9A%94%20%EC%97%86%EC%9D%8C-6366f1?style=flat-square" alt="회원가입 필요 없음">
+<img src="https://img.shields.io/badge/%EC%98%A4%ED%94%88%EC%86%8C%EC%8A%A4-MIT-64748b?style=flat-square" alt="오픈소스 MIT">
+
+<br><br>
 
 <a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-macos-arm64.dmg"><img src="https://img.shields.io/badge/macOS-Apple_%EC%B9%A9-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple 칩"></a>
 <a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-macos-x64.dmg"><img src="https://img.shields.io/badge/macOS-%EC%9D%B8%ED%85%94-4B5563?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 인텔"></a>
 <a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Windows-%EB%82%B4%EB%A0%A4%EB%B0%9B%EA%B8%B0-2563EB?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
 <a href="https://github.com/zoo3323/hangul-editor/releases/latest/download/hangul-editor-linux-x64.deb"><img src="https://img.shields.io/badge/Linux-.deb-F59E0B?style=for-the-badge&logo=linux&logoColor=white" alt="Linux"></a>
 
-<img src="docs/images/app.png" width="900" alt="한글 편집기 화면">
+<img src="docs/images/app.png" width="920" alt="한글 편집기로 HWP 문서를 연 화면">
 
 </div>
 
-## ✨ 시험지가 겹치지 않아요
+## 💸 한컴오피스가 없어도 됩니다
 
-<img src="docs/images/compare-exam.png" alt="2단 시험지 비교">
-<img src="docs/images/compare-answer.png" alt="해설지 머리 비교">
+| 💰 | 🚫 | 🙅 | 📴 |
+| :---: | :---: | :---: | :---: |
+| **0원** | **광고 없음** | **가입 없음** | **인터넷 없이** |
+| 완전 무료 | 깨끗한 화면 | 설치하면 끝 | 내 컴퓨터에서만 |
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/start.png" alt="시작 화면"></td>
+<td width="50%"><img src="docs/images/dark.png" alt="어두운 화면"></td>
+</tr>
+<tr>
+<td align="center">시작 화면</td>
+<td align="center">어두운 화면</td>
+</tr>
+</table>
+
+<a id="설치"></a>
 
 ## 📥 설치
 
@@ -55,27 +77,44 @@ curl -fsSL https://raw.githubusercontent.com/zoo3323/hangul-editor/main/install/
 개인이 만든 무료 앱이라 유료 인증서가 없어 한 번 나오는 경고입니다. 한 줄 설치를 쓰면 나오지 않습니다.
 </details>
 
-## ✅ 할 수 있는 것
+## 🛠️ HOP·rhwp의 문제를 고쳤습니다
 
-| 📂 열기 | ✏️ 편집 | 💾 HWP 저장 | 📄 PDF | 🖨️ 인쇄 | 🔗 링크 |
-| :---: | :---: | :---: | :---: | :---: | :---: |
-| HWP · HWPX | 글자 · 표 · 그림 | 원본 형식 그대로 | 내보내기 | 바로 인쇄 | 브라우저로 열기 |
+원래 오픈소스 [HOP](https://github.com/golbin/hop)과 [rhwp](https://github.com/edwardkim/rhwp)에서 알려진 주요 문제를 고쳐 넣었습니다.
+
+| | 고친 문제 | 원래 |
+| :---: | --- | :---: |
+| 🧾 | 2단 문서에서 머리 표·상자·그림이 서로 겹치던 문제 | rhwp |
+| 💥 | 일부 문서를 열면 앱이 멈추던 문제 | rhwp |
+| 💾 | 저장하면 묶음 도형의 설명이 사라지던 문제 | rhwp |
+| 📑 | 머리말이 틀을 넘으면 글이 사라지던 문제 | rhwp |
+| 📊 | 표 안의 표를 고치면 바깥 표가 망가지던 문제 | rhwp |
+| 🔤 | 글꼴 목록이 열리지 않던 문제 | HOP |
+| 🔗 | 링크를 누르면 "팝업 차단"으로 막히던 문제 | HOP |
+| ⌨️ | macOS 창 메뉴와 단축키 표시가 어긋나던 문제 | HOP |
+| 🎨 | 회색으로 낡아 보이던 화면 → 새 디자인 | HOP |
 
 <details>
-<summary>🔧 고친 것</summary>
+<summary>자세히 (이슈·PR 번호)</summary>
 
-| | |
+| 고친 문제 | 출처 |
 | --- | --- |
-| 🧾 2단 시험지 | 머리 표·`<보기>` 상자·해설지 머리 개체가 겹치던 문제 |
-| 💥 멈춤 | 쪽 배치 중 앱이 멈추던 문제 (rhwp PR #8286) |
-| 💾 저장 | HWP 저장 때 도형 설명이 사라지던 문제 (rhwp #8225) |
-| 📑 머리말 | 틀을 넘친 머리말 문단이 사라지던 문제 (rhwp PR #8293) |
-| 📊 표 안의 표 | 줄·칸 편집이 바깥 표를 망가뜨리던 문제를 막음 (rhwp #8138) |
-| 🔤 글꼴 목록 | 툴바 글꼴 목록이 열리지 않던 문제 (HOP #106) |
-| 🔗 링크 | 하이퍼링크가 "팝업 차단"으로 막히던 문제 (HOP #111) |
+| 2단 문서 개체 겹침 | rhwp #8158 · 이 저장소의 엔진 수정 |
+| 앱 멈춤 | rhwp PR #8286 |
+| 묶음 도형 설명 사라짐 | rhwp #8225 (PR #8233) |
+| 머리말 넘침 | rhwp PR #8293 |
+| 표 안의 표 편집 | rhwp #8138 |
+| 글꼴 목록 | HOP #106 · #119 |
+| 링크 열기 | HOP #111 |
+| macOS 창 메뉴·단축키 | HOP PR #105 · #110 |
 
 엔진 수정은 [`patches/rhwp/`](patches/rhwp), 원래 HOP 설명은 [`docs/HOP-README.md`](docs/HOP-README.md)에 있습니다.
 </details>
+
+## ✅ 할 수 있는 것
+
+| 📂 열기 | ✏️ 편집 | 💾 HWP 저장 | 📄 PDF | 🖨️ 인쇄 | 🌙 다크 모드 |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| HWP · HWPX | 글자 · 표 · 그림 | 원본 형식 그대로 | 내보내기 | 바로 인쇄 | 눈이 편하게 |
 
 <details>
 <summary>🛠️ 직접 빌드</summary>
