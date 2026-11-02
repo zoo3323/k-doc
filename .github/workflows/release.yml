@@ -65,8 +65,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, bundles: 'app,dmg' }
-          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin, bundles: 'app,dmg' }
+          - { name: macos-arm64, os: macos-14, target: aarch64-apple-darwin, bundles: app }
+          - { name: macos-x64, os: macos-15-intel, target: x86_64-apple-darwin, bundles: app }
           - { name: windows-x64, os: windows-latest, target: x86_64-pc-windows-msvc, bundles: nsis }
           - { name: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, bundles: 'deb,appimage' }
     runs-on: ${{ matrix.os }}
@@ -134,7 +134,6 @@ jobs:
           mkdir -p out
           case "${{ matrix.name }}" in
             macos-*)
-              cp "$(ls "$bundle"/dmg/*.dmg | head -1)" "out/k-doc-${{ matrix.name }}.dmg"
               ditto -c -k --keepParent "$(ls -d "$bundle"/macos/*.app | head -1)" "out/k-doc-${{ matrix.name }}.zip"
               ;;
             windows-*)
@@ -175,13 +174,17 @@ jobs:
           name: K-Doc ${{ github.ref_name }}
           files: out/*
           body: |
-            ## 내려받기
+            ## 설치
+
+            🍎 **macOS**: 터미널에 아래 한 줄을 붙여 넣고 Enter (Apple 칩·인텔 자동, 경고 없음)
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install/install-mac.sh | bash
+            ```
 
             | 운영체제 | 파일 |
             | --- | --- |
-            | 🍎 macOS (M1·M2·M3·M4) | `k-doc-macos-arm64.dmg` |
-            | 🍎 macOS (인텔) | `k-doc-macos-x64.dmg` |
             | 🪟 Windows | `k-doc-windows-x64-setup.exe` |
             | 🐧 Linux | `k-doc-linux-x64.deb` · `.AppImage` |
 
-            처음 실행할 때 보안 경고가 나오면 [설치 안내](https://github.com/${{ github.repository }}#설치)를 보세요.
+            `k-doc-macos-*.zip` 은 위 설치 줄이 내려받는 파일입니다. 자세한 안내는 [설치](https://github.com/${{ github.repository }}#설치)를 보세요.

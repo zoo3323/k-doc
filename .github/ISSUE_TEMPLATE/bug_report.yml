@@ -71,7 +71,7 @@ body:
     attributes:
       label: Install Package
       options:
-        - DMG (macOS)
+        - 터미널 한 줄 설치 (macOS)
         - Homebrew (macOS)
         - MSI (Windows)
         - AppImage (Linux)

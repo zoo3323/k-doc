@@ -15,12 +15,11 @@
 
 **👇 내 컴퓨터에 맞는 버튼을 누르세요**
 
-<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-macos-arm64.dmg"><img src="https://img.shields.io/badge/macOS-Apple_%EC%B9%A9-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS Apple 칩"></a>
-<a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-macos-x64.dmg"><img src="https://img.shields.io/badge/macOS-%EC%9D%B8%ED%85%94-4B5563?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 인텔"></a>
+<a href="#mac-설치"><img src="https://img.shields.io/badge/macOS-%ED%84%B0%EB%AF%B8%EB%84%90%20%ED%95%9C%20%EC%A4%84-111827?style=for-the-badge&logo=apple&logoColor=white" alt="macOS 터미널 한 줄"></a>
 <a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-windows-x64-setup.exe"><img src="https://img.shields.io/badge/Windows-%EB%82%B4%EB%A0%A4%EB%B0%9B%EA%B8%B0-2563EB?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
 <a href="https://github.com/zoo3323/k-doc/releases/latest/download/k-doc-linux-x64.deb"><img src="https://img.shields.io/badge/Linux-.deb-F59E0B?style=for-the-badge&logo=linux&logoColor=white" alt="Linux"></a>
 
-<sub>Mac 칩을 모르면: 왼쪽 위 사과 메뉴 → 이 Mac에 관하여 → '칩'이 Apple M이면 Apple 칩</sub>
+<sub>Mac은 버튼 대신 아래 <a href="#mac-설치">한 줄 설치</a>를 쓰세요. Apple 칩·인텔은 알아서 맞춥니다.</sub>
 
 <img src="docs/images/app.png" width="920" alt="K-Doc으로 HWP 문서를 연 화면">
 
@@ -48,34 +47,36 @@
 
 ## 📥 설치
 
-<img src="docs/images/install-steps.png" alt="내려받기 → 설치 → 끝">
+<a id="mac-설치"></a>
 
-| | 받은 파일 | 이렇게 하세요 |
-| :---: | --- | --- |
-| 🍎 | `.dmg` | 더블클릭 → **K-Doc**을 **응용 프로그램** 폴더로 끌어 놓기 |
-| 🪟 | `-setup.exe` | 더블클릭 → **설치** |
-| 🐧 | `.deb` | 더블클릭 → **설치** |
+### 🍎 macOS: 터미널에 한 줄
 
-### ⚠️ 처음 열 때 경고가 나오면
-
-개인이 만든 무료 앱이라 유료 인증서가 없어서 **처음 한 번만** 나옵니다.
-
-**🍎 macOS**
-
-<img src="docs/images/first-run-mac.png" alt="완료 → 시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기">
-
-**🪟 Windows**
-
-<img src="docs/images/first-run-windows.png" alt="추가 정보 → 실행">
-
-<details>
-<summary>⌨️ 터미널이 익숙하다면: 한 줄 설치 (경고 없음)</summary>
-
-🍎 macOS
+1. **⌘ + 스페이스**를 누르고 `터미널`을 입력한 뒤 **Enter**
+2. 아래 한 줄을 복사해 붙여 넣고 **Enter**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zoo3323/k-doc/main/install/install-mac.sh | bash
 ```
+
+끝나면 K-Doc이 바로 열립니다. 경고 창도, 비밀번호 입력도 없습니다. 새 버전이 나오면 같은 줄을 다시 실행하면 업데이트됩니다.
+
+### 🪟 Windows · 🐧 Linux
+
+<img src="docs/images/install-steps.png" alt="내려받기 → 설치 → 끝">
+
+| | 받은 파일 | 이렇게 하세요 |
+| :---: | --- | --- |
+| 🪟 | `-setup.exe` | 더블클릭 → **설치** |
+| 🐧 | `.deb` | 더블클릭 → **설치** |
+
+**🪟 Windows에서 처음 열 때 경고가 나오면**
+
+개인이 만든 무료 앱이라 유료 인증서가 없어서 **처음 한 번만** 나옵니다.
+
+<img src="docs/images/first-run-windows.png" alt="추가 정보 → 실행">
+
+<details>
+<summary>⌨️ Windows·Linux도 한 줄 설치 (경고 없음)</summary>
 
 🪟 Windows · PowerShell
 
