@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # third_party/rhwp 에 upstream rhwp 기준 커밋을 받고 patches/rhwp/*.patch 를 적용한다.
 # rhwp 저장소는 문서·PDF 자료 때문에 수 GB 라 blob 은 필요할 때만 받고 무거운 폴더는 뺀다.
+# CLI(k-doc-agent)가 실행 파일에 넣는 안내 문서(mydocs/manual, mydocs/tech/agent_roadmap)는 받는다.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,7 +15,8 @@ if [ ! -e "$RHWP/Cargo.toml" ]; then
   git clone -c core.autocrlf=false -c core.longpaths=true --filter=blob:none --no-checkout \
     https://github.com/edwardkim/rhwp.git "$RHWP"
   git -C "$RHWP" sparse-checkout set --no-cone '/*' '!/mydocs/' '!/pdf/' \
-    '/mydocs/pr/assets/two_column_exam_floats/' '/pdf/two_column_exam_floats/'
+    '/mydocs/pr/assets/two_column_exam_floats/' '/pdf/two_column_exam_floats/' \
+    '/mydocs/manual/' '/mydocs/tech/agent_roadmap/'
   git -C "$RHWP" checkout -q "$BASE"
 fi
 
