@@ -28,12 +28,17 @@
 		<dict>
 			<key>QLSupportedContentTypes</key>
 			<array>
-				<string>net.golbin.hop.hwp</string>
-				<string>net.golbin.hop.hwpx</string>
+				<string>io.github.zoo3323.k-doc.hwp</string>
 				<string>com.hancom.hwp</string>
-				<string>com.hancom.hwpx</string>
 				<string>com.haansoft.hancomofficeviewer.mac.hwp</string>
+				<string>org.libreoffice.hwp-document</string>
+				<string>com.postmelee.alhangeul.hwp</string>
+				<string>net.golbin.hop.hwp</string>
+				<string>io.github.zoo3323.k-doc.hwpx</string>
+				<string>com.hancom.hwpx</string>
 				<string>com.haansoft.hancomofficeviewer.mac.hwpx</string>
+				<string>com.postmelee.alhangeul.hwpx</string>
+				<string>net.golbin.hop.hwpx</string>
 			</array>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
