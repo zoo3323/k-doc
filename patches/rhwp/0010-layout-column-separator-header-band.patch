@@ -1,0 +1,224 @@
+From 98d33d35cbb110582b1955c4192bee0c5f4d7880 Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 11:16:52 +0900
+Subject: [PATCH 10/10] =?UTF-8?q?fix(layout):=20=EB=8B=A8=20=EA=B5=AC?=
+ =?UTF-8?q?=EB=B6=84=EC=84=A0=EC=9D=84=20=EB=A8=B8=EB=A6=AC=20=EA=B0=9C?=
+ =?UTF-8?q?=EC=B2=B4=20=EB=9D=A0=20=EC=95=84=EB=9E=98=EC=97=90=EC=84=9C=20?=
+ =?UTF-8?q?=EC=8B=9C=EC=9E=91=ED=95=98=EA=B3=A0=20=EB=A7=88=EC=A7=80?=
+ =?UTF-8?q?=EB=A7=89=20=EA=B8=80=EC=A4=84=EC=97=90=EC=84=9C=20=EB=A9=88?=
+ =?UTF-8?q?=EC=B6=98=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+2단 시험지 첫 쪽처럼 구역 첫머리에 본문 폭 전체의 자리차지 개체(머리 표)가
+있으면 모든 단의 시작은 그 아래로 밀리는데, 단 구분선은 본문 영역 맨 위에서
+시작해 머리 표를 세로로 가로질렀다. 구분선 위끝을 같은 띠의 바깥 아래 여백 끝으로
+둔다. 문단 기준 개체는 앵커 문단이 구역 첫 문단일 때만 띠로 본다.
+
+구분선 아래끝은 문단 테두리·배경 장식을 빼고 잰다. 상자는 마지막 줄의 줄 뒤
+간격까지 감싸므로 구분선이 그만큼(이 시험지 1쪽 5.9px) 길었다.
+
+검증: 맥용 한글 12.30 Print PDF(two_column_exam_floats 3종, 7쪽 전부)의 구분선
+위·아래끝과 0.4px 안으로 맞는다. 수정 전 1쪽 위끝은 61.5·29.5·96.8px 위였다.
+실제 2단 시험지 5쪽을 한컴 화면과 견줘도 1쪽 120.1~1025.4px(한컴 120~1026),
+2~5쪽은 그대로 일치한다. 관계 회귀 테스트를 two_column_exam_float_stack 에 더했다.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/renderer/layout.rs                     | 14 ++--
+ src/renderer/layout/column_separators.rs   | 47 ++++++++++++-
+ tests/cases/two_column_exam_float_stack.rs | 82 ++++++++++++++++++++++
+ 3 files changed, 136 insertions(+), 7 deletions(-)
+
+diff --git a/src/renderer/layout.rs b/src/renderer/layout.rs
+index e6f213db8..7d56966d1 100644
+--- a/src/renderer/layout.rs
++++ b/src/renderer/layout.rs
+@@ -6696,7 +6696,12 @@ impl LayoutEngine {
+                 // 하단까지만 그려진다. body 초과분은 emit_zone_column_separators 가 캡한다.
+                 if zone_layout.column_areas.len() >= 2 && zone_layout.separator_type > 0 {
+                     prev_zone_layout_for_sep = Some(zone_layout.clone());
+-                    prev_zone_sep_y_start = current_zone_start_y.max(zone_layout.body_area.y);
++                    // 전폭 머리 개체가 단 시작을 민 만큼 구분선 위끝도 띠 아래로 둔다.
++                    prev_zone_sep_y_start = column_separators::start_below_header_band(
++                        current_zone_start_y.max(zone_layout.body_area.y),
++                        &body_wide_reserved,
++                        new_zone_first_para,
++                    );
+                 } else {
+                     prev_zone_layout_for_sep = None;
+                 }
+@@ -6876,11 +6881,8 @@ impl LayoutEngine {
+             // 다음 흐름의 원점에는 줄 뒤 간격을 포함하지만, 구분선은 수용한
+             // 줄·표·개체의 물리 끝까지만 그린다. 빈 글줄의 상자도 점유로 보존한다.
+             // Column 자체 bbox는 전체 본문 높이이므로 실제 자식의 범위를 소비한다.
+-            let content_bottom = col_node
+-                .children
+-                .iter()
+-                .map(render_subtree_bottom)
+-                .reduce(f64::max);
++            // 문단 테두리·배경 장식은 줄 뒤 간격까지 감싸므로 빼고 잰다.
++            let content_bottom = column_separators::content_bottom(&col_node);
+             if let Some(bottom) = content_bottom {
+                 prev_zone_sep_y_end = prev_zone_sep_y_end.max(bottom);
+             }
+diff --git a/src/renderer/layout/column_separators.rs b/src/renderer/layout/column_separators.rs
+index ea986c736..9695bd397 100644
+--- a/src/renderer/layout/column_separators.rs
++++ b/src/renderer/layout/column_separators.rs
+@@ -1,12 +1,57 @@
+ //! 본문과 바탕쪽의 단 구분선에 같은 영역 계산·선 스타일을 적용한다.
+ 
+ use super::border_rendering::border_width_to_px;
++use super::shape_layout::BodyWideReserve;
+ use crate::model::header_footer::MasterPage;
+ use crate::model::page::ColumnDef;
+ use crate::renderer::page_layout::{calculate_column_areas, LayoutRect, PageLayoutInfo};
+-use crate::renderer::render_tree::LineNode;
++use crate::renderer::render_tree::{LineNode, RenderNode, RenderNodeType};
+ use crate::renderer::{hwpunit_to_px, LineStyle, StrokeDash};
+ 
++/// 구역 첫머리를 막는 전폭 개체 띠 아래에서 단 구분선을 시작한다.
++///
++/// 다단 쪽의 본문 폭 전체 자리차지 개체는 모든 단의 시작을 그 아래로 민다
++/// (`build_single_column` 의 `body_wide_reserved`). 한컴도 구분선을 그 띠 아래의 단
++/// 영역에만 긋는다. 2단 시험지 머리 표(문단 기준 음수 오프셋) 쪽에서 한컴 화면과 맥용
++/// 한글 12.30 Print PDF 의 구분선 위끝은 표 바깥 아래 여백 끝이다.
++/// 문단 기준 개체는 앵커 문단이 구역 첫 문단일 때만 띠로 본다. 앞에 글줄이 있으면
++/// 그 글줄 옆에도 구분선이 있어야 하기 때문이다.
++pub(super) fn start_below_header_band(
++    zone_top: f64,
++    reserves: &[BodyWideReserve],
++    zone_first_para: Option<usize>,
++) -> f64 {
++    reserves
++        .iter()
++        .filter(|reserve| !reserve.para_relative || Some(reserve.para_index) == zone_first_para)
++        .map(|reserve| reserve.bottom_y)
++        .fold(zone_top, f64::max)
++}
++
++/// 단 구분선 아래끝으로 쓸 단 내용의 물리 하단.
++///
++/// 문단 테두리·배경은 마지막 줄의 줄 뒤 간격과 테두리 간격까지 감싸므로 내용 끝이 아니다.
++/// 한컴은 구분선을 마지막 글줄 아래끝에서 멈춘다. 개체를 소유하지 않은 단 직속
++/// 사각형·선·패스·그림(문단 테두리·배경 장식)만 빼고, 글줄·표·개체는 그대로 잰다.
++pub(super) fn content_bottom(column: &RenderNode) -> Option<f64> {
++    column
++        .children
++        .iter()
++        .filter(|node| !is_paragraph_decoration(node))
++        .map(super::render_subtree_bottom)
++        .reduce(f64::max)
++}
++
++fn is_paragraph_decoration(node: &RenderNode) -> bool {
++    match &node.node_type {
++        RenderNodeType::Rectangle(shape) => shape.control_index.is_none(),
++        RenderNodeType::Line(shape) => shape.control_index.is_none(),
++        RenderNodeType::Path(shape) => shape.control_index.is_none(),
++        RenderNodeType::Image(image) => image.control_index.is_none(),
++        _ => false,
++    }
++}
++
+ /// 바탕쪽의 저장 텍스트 프레임 전체를 점유하는 배경 구분선이다.
+ /// 본문 내용 끝이나 본문의 단 설정으로 바탕쪽 정의를 대신하지 않는다.
+ pub(super) fn master_page_lines(
+diff --git a/tests/cases/two_column_exam_float_stack.rs b/tests/cases/two_column_exam_float_stack.rs
+index dcac1cf0a..f9e78bb1a 100644
+--- a/tests/cases/two_column_exam_float_stack.rs
++++ b/tests/cases/two_column_exam_float_stack.rs
+@@ -250,6 +250,88 @@ fn coanchored_topbottom_objects_stack_in_control_order() {
+     );
+ }
+ 
++/// 두 단 사이의 세로 단 구분선(위끝, 아래끝).
++fn column_separator(root: &RenderNode) -> (f64, f64) {
++    let left = column_bbox(root, 0);
++    let right = column_bbox(root, 1);
++    let mut nodes = Vec::new();
++    walk(root, &mut nodes);
++    let found: Vec<_> = nodes
++        .iter()
++        .filter_map(|n| match &n.node_type {
++            RenderNodeType::Line(line)
++                if (line.x1 - line.x2).abs() < EPS
++                    && line.x1 > left.x + left.width - EPS
++                    && line.x1 < right.x + EPS
++                    && (line.y2 - line.y1).abs() > left.height / 4.0 =>
++            {
++                Some((line.y1.min(line.y2), line.y1.max(line.y2)))
++            }
++            _ => None,
++        })
++        .collect();
++    assert_eq!(found.len(), 1, "단 구분선 누락·중복: {found:?}");
++    found[0]
++}
++
++/// 단 구분선은 머리 개체 띠 아래의 단 영역에만 긋는다. 위끝은 머리 개체 아래이자 두 단
++/// 첫 글줄 위, 아래끝은 마지막 본문 글줄 아래이다(문단 테두리의 줄 뒤 간격은 넣지 않는다).
++/// 맥용 한글 12.30 Print PDF의 구분선(96dpi px, pdftocairo 벡터 좌표):
++/// header-table-boxes 248.00..1430.56, coanchored-stack 137.12..1037.76,
++/// empty-host-negative-offset 120.16..423.20. 수정 전 위끝은 본문 영역 맨 위
++/// (151.16 · 75.57 · 90.71)여서 머리 표를 세로로 가로질렀다.
++#[test]
++fn column_separator_starts_below_the_header_band() {
++    let cases: [(&str, &[(bool, usize, usize)]); 3] = [
++        ("header-table-boxes.hwpx", &[(true, 0, 5)]),
++        (
++            "coanchored-stack.hwpx",
++            &[(false, 0, 3), (true, 0, 4), (false, 0, 5), (true, 0, 6)],
++        ),
++        ("empty-host-negative-offset.hwpx", &[(true, 0, 4)]),
++    ];
++    for (name, headers) in cases {
++        let core = load(name);
++        let page = core.build_page_render_tree(0).unwrap();
++        let (top, end) = column_separator(&page.root);
++        let header_bottom = headers
++            .iter()
++            .map(|&(is_table, para, control)| {
++                let b = if is_table {
++                    table(&page.root, para, control)
++                } else {
++                    rectangle(&page.root, para, control)
++                };
++                bottom(&b)
++            })
++            .fold(f64::NEG_INFINITY, f64::max);
++        assert!(
++            top >= header_bottom - EPS,
++            "{name}: 구분선이 머리 개체를 가로지른다: 위끝 {top:.2}, 머리 아래 {header_bottom:.2}"
++        );
++        let lines = body_lines(&page.root);
++        for col in [0usize, 1] {
++            let first = lines
++                .iter()
++                .filter(|(c, p, _)| *c == col && *p >= 1)
++                .map(|(_, _, b)| b.y)
++                .fold(f64::INFINITY, f64::min);
++            assert!(
++                (top - first).abs() < 1.0,
++                "{name}: 구분선 위끝이 단 {col} 첫 글줄 위와 다르다: 위끝 {top:.2}, 글줄 {first:.2}"
++            );
++        }
++        let last = lines
++            .iter()
++            .map(|(_, _, b)| bottom(b))
++            .fold(f64::NEG_INFINITY, f64::max);
++        assert!(
++            (end - last).abs() < 1.0,
++            "{name}: 구분선 아래끝이 마지막 글줄 아래와 다르다: 아래끝 {end:.2}, 글줄 {last:.2}"
++        );
++    }
++}
++
+ /// 저장 사다리가 음수 오프셋까지 닫은 빈 문단 머리 표는 본문 위로 올라가고, 뒤 문단은
+ /// 그 표 아래에서 바로 이어진다.
+ #[test]
+-- 
+2.50.1 (Apple Git-155)
+
