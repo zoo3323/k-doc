@@ -1,4 +1,4 @@
-From 625a5d8902fc7ed77f34fb7959e21d5ca1e5b77d Mon Sep 17 00:00:00 2001
+From bd8349029c41b4f4ac063a49c04996337ba609fc Mon Sep 17 00:00:00 2001
 From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
 Date: Mon, 2 Nov 2026 11:16:52 +0900
 Subject: [PATCH 10/10] =?UTF-8?q?fix(layout):=20=EB=8B=A8=20=EA=B5=AC?=
@@ -28,8 +28,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/renderer/layout.rs                     | 14 ++--
  src/renderer/layout/column_separators.rs   | 47 ++++++++++-
- tests/cases/two_column_exam_float_stack.rs | 96 ++++++++++++++++++++++
- 3 files changed, 150 insertions(+), 7 deletions(-)
+ tests/cases/two_column_exam_float_stack.rs | 94 ++++++++++++++++++++++
+ 3 files changed, 148 insertions(+), 7 deletions(-)
 
 diff --git a/src/renderer/layout.rs b/src/renderer/layout.rs
 index e6f213db8..7d56966d1 100644
@@ -127,15 +127,15 @@ index ea986c736..9695bd397 100644
  /// 본문 내용 끝이나 본문의 단 설정으로 바탕쪽 정의를 대신하지 않는다.
  pub(super) fn master_page_lines(
 diff --git a/tests/cases/two_column_exam_float_stack.rs b/tests/cases/two_column_exam_float_stack.rs
-index dcac1cf0a..9f0be6755 100644
+index dcac1cf0a..d1597f2f7 100644
 --- a/tests/cases/two_column_exam_float_stack.rs
 +++ b/tests/cases/two_column_exam_float_stack.rs
-@@ -250,6 +250,102 @@ fn coanchored_topbottom_objects_stack_in_control_order() {
+@@ -250,6 +250,100 @@ fn coanchored_topbottom_objects_stack_in_control_order() {
      );
  }
  
-+/// 두 단 사이의 세로 단 구분선(위끝, 아래끝).
-+fn column_separator(root: &RenderNode) -> (f64, f64) {
++/// 두 단 사이의 세로 단 구분선(x, 위끝, 아래끝).
++fn column_separator(root: &RenderNode) -> (f64, f64, f64) {
 +    let left = column_bbox(root, 0);
 +    let right = column_bbox(root, 1);
 +    let mut nodes = Vec::new();
@@ -149,7 +149,7 @@ index dcac1cf0a..9f0be6755 100644
 +                    && line.x1 < right.x + EPS
 +                    && (line.y2 - line.y1).abs() > left.height / 4.0 =>
 +            {
-+                Some((line.y1.min(line.y2), line.y1.max(line.y2)))
++                Some((line.x1, line.y1.min(line.y2), line.y1.max(line.y2)))
 +            }
 +            _ => None,
 +        })
@@ -158,54 +158,52 @@ index dcac1cf0a..9f0be6755 100644
 +    found[0]
 +}
 +
-+/// 단 구분선은 머리 개체 띠 아래의 단 영역에만 긋는다. 위끝은 가장 아래 머리 표의 바깥
-+/// 아래 여백 끝(단 시작을 민 띠의 끝)이고, 아래끝은 마지막 본문 글줄 아래이다(문단
-+/// 테두리의 줄 뒤 간격은 넣지 않는다). 첫 글줄 위가 아니다: header-table-boxes 왼쪽 단은
-+/// 띠 끝보다 36px 아래에서 글줄이 시작한다.
-+/// 맥용 한글 12.30 Print PDF의 구분선(96dpi px, pdftocairo 벡터 좌표):
++/// 단 구분선은 단 시작을 민 머리 띠(본문 폭 전체의 자리차지 개체) 아래의 단 영역에만
++/// 긋고, 마지막 본문 글줄 아래에서 멈춘다(문단 테두리의 줄 뒤 간격은 넣지 않는다).
++/// 기대값은 같은 파일의 맥용 한글 12.30 Print PDF 벡터 좌표(pdftocairo, 96dpi px)이다:
 +/// header-table-boxes 248.00..1430.56, coanchored-stack 137.12..1037.76,
 +/// empty-host-negative-offset 120.16..423.20. 수정 전 위끝은 본문 영역 맨 위
-+/// (151.16 · 75.57 · 90.71)여서 머리 표를 세로로 가로질렀다.
++/// (151.16 · 75.57 · 90.71)여서 머리 표를 세로로 가로질렀다. coanchored-stack 은 제목
++/// 상자만 본문 폭 전체이고 뒤 표·둥근 상자는 왼쪽 단 안이라, 구분선은 그 옆을 지난다.
 +#[test]
 +fn column_separator_starts_below_the_header_band() {
-+    // (문서, 머리 개체(표인가, 문단, 컨트롤), 가장 아래 머리 표의 컨트롤)
-+    let cases: [(&str, &[(bool, usize, usize)], usize); 3] = [
-+        ("header-table-boxes.hwpx", &[(true, 0, 5)], 5),
++    // (문서, 머리 개체(표인가, 문단, 컨트롤), Print 구분선 위끝, 아래끝)
++    let cases: [(&str, &[(bool, usize, usize)], f64, f64); 3] = [
++        ("header-table-boxes.hwpx", &[(true, 0, 5)], 248.00, 1430.56),
 +        (
 +            "coanchored-stack.hwpx",
 +            &[(false, 0, 3), (true, 0, 4), (false, 0, 5), (true, 0, 6)],
-+            6,
++            137.12,
++            1037.76,
 +        ),
-+        ("empty-host-negative-offset.hwpx", &[(true, 0, 4)], 4),
++        ("empty-host-negative-offset.hwpx", &[(true, 0, 4)], 120.16, 423.20),
 +    ];
-+    for (name, headers, lowest) in cases {
++    for (name, headers, print_top, print_end) in cases {
 +        let core = load(name);
 +        let page = core.build_page_render_tree(0).unwrap();
-+        let (top, end) = column_separator(&page.root);
-+        let header_bottom = headers
-+            .iter()
-+            .map(|&(is_table, para, control)| {
-+                let b = if is_table {
-+                    table(&page.root, para, control)
-+                } else {
-+                    rectangle(&page.root, para, control)
-+                };
-+                bottom(&b)
-+            })
-+            .fold(f64::NEG_INFINITY, f64::max);
++        let (x, top, end) = column_separator(&page.root);
++        for &(is_table, para, control) in headers {
++            let b = if is_table {
++                table(&page.root, para, control)
++            } else {
++                rectangle(&page.root, para, control)
++            };
++            // 구분선 x 를 가로로 걸친 머리 개체만 구분선과 만날 수 있다.
++            if b.x < x - EPS && b.x + b.width > x + EPS {
++                assert!(
++                    top >= bottom(&b) - EPS,
++                    "{name}: 구분선이 머리 개체 ({para}, {control}) 를 가로지른다: 위끝 {top:.2}, 개체 아래 {:.2}",
++                    bottom(&b)
++                );
++            }
++        }
 +        assert!(
-+            top >= header_bottom - EPS,
-+            "{name}: 구분선이 머리 개체를 가로지른다: 위끝 {top:.2}, 머리 아래 {header_bottom:.2}"
++            (top - print_top).abs() <= 1.0,
++            "{name}: 구분선 위끝이 Print 와 다르다: 실제 {top:.2}, Print {print_top:.2}"
 +        );
-+        let Control::Table(band) = &core.document().sections[0].paragraphs[0].controls[lowest]
-+        else {
-+            panic!("{name}: 문단 0 컨트롤 {lowest} 이 표가 아니다");
-+        };
-+        let band_end =
-+            bottom(&table(&page.root, 0, lowest)) + f64::from(band.outer_margin_bottom) / 75.0;
 +        assert!(
-+            (top - band_end).abs() < 1.0,
-+            "{name}: 구분선 위끝이 머리 띠 끝과 다르다: 위끝 {top:.2}, 띠 끝 {band_end:.2}"
++            (end - print_end).abs() <= 1.0,
++            "{name}: 구분선 아래끝이 Print 와 다르다: 실제 {end:.2}, Print {print_end:.2}"
 +        );
 +        let lines = body_lines(&page.root);
 +        for col in [0usize, 1] {
@@ -224,8 +222,8 @@ index dcac1cf0a..9f0be6755 100644
 +            .map(|(_, _, b)| bottom(b))
 +            .fold(f64::NEG_INFINITY, f64::max);
 +        assert!(
-+            (end - last).abs() < 1.0,
-+            "{name}: 구분선 아래끝이 마지막 글줄 아래와 다르다: 아래끝 {end:.2}, 글줄 {last:.2}"
++            end <= last + 1.0,
++            "{name}: 구분선이 마지막 글줄 아래로 더 내려간다: 아래끝 {end:.2}, 글줄 {last:.2}"
 +        );
 +    }
 +}
