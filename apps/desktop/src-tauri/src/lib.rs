@@ -1,5 +1,6 @@
 mod app_quit;
 mod commands;
+mod external_change;
 mod font_catalog;
 #[cfg(target_os = "linux")]
 mod linux_runtime;
@@ -29,7 +30,7 @@ use commands::{
     destroy_current_window, export_pdf, export_pdf_from_hwp_path, list_local_fonts,
     list_recent_documents, mark_document_dirty, mutate_document, note_finder_recent_document,
     open_document_tracking, prepare_document_open, prepare_staged_hwp_pdf_export,
-    prepare_staged_hwp_save, print_webview, query_document, read_local_font,
+    prepare_staged_hwp_save, poll_external_modification, print_webview, query_document, read_local_font,
     record_recent_document, render_document_preview, render_page_svg, reveal_in_folder,
     take_pending_open_paths,
 };
@@ -101,6 +102,7 @@ pub fn run() {
             prepare_staged_hwp_save,
             commit_staged_hwp_save,
             check_external_modification,
+            poll_external_modification,
             take_pending_open_paths,
             reveal_in_folder,
             open_external_url,

@@ -626,9 +626,18 @@ async function createNewDocument(): Promise<void> {
 
 // 커맨드에서 새 문서 생성 호출
 eventBus.on('create-new-document', () => { createNewDocument(); });
-eventBus.on('desktop-document-loaded', (payload) => {
-  const p = payload as { docInfo: DocumentInfo; message: string };
-  initializeDocument(p.docInfo, p.message);
+eventBus.on('desktop-document-loaded', async (payload) => {
+  const p = payload as {
+    docInfo: DocumentInfo;
+    message: string;
+    scroll?: { top: number; left: number };
+  };
+  await initializeDocument(p.docInfo, p.message);
+  // 밖에서 바뀐 파일을 다시 불러온 경우 보던 자리를 지킨다.
+  if (p.scroll) {
+    const container = document.getElementById('scroll-container');
+    container?.scrollTo({ top: p.scroll.top, left: p.scroll.left });
+  }
 });
 eventBus.on('desktop-document-saved', () => {
   documentState.markClean('save');

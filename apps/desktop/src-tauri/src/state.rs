@@ -60,9 +60,9 @@ pub struct ExternalModificationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileFingerprint {
-    len: u64,
-    modified_millis: u64,
-    content_hash: u32,
+    pub(crate) len: u64,
+    pub(crate) modified_millis: u64,
+    pub(crate) content_hash: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +227,17 @@ impl DocumentSessionManager {
     ) -> Result<ExternalModificationStatus, String> {
         let session = self.session(doc_id)?;
         session.external_modification_status(target_path.as_deref())
+    }
+
+    pub fn poll_external_modification(
+        &mut self,
+        doc_id: &str,
+    ) -> Result<crate::external_change::ExternalChangePoll, String> {
+        let session = self.session_mut(doc_id)?;
+        crate::external_change::poll_source(
+            session.source_path.as_deref(),
+            &mut session.source_fingerprint,
+        )
     }
 
     pub fn render_page_svg(
@@ -640,7 +651,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn file_fingerprint(path: &Path) -> std::io::Result<FileFingerprint> {
+pub(crate) fn file_fingerprint(path: &Path) -> std::io::Result<FileFingerprint> {
     let metadata = std::fs::metadata(path)?;
     let mut file = std::fs::File::open(path)?;
     file_fingerprint_from_metadata(metadata, hash_reader(&mut file)?)

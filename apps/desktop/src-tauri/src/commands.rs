@@ -196,6 +196,18 @@ pub fn check_external_modification(
 }
 
 #[tauri::command]
+pub fn poll_external_modification(
+    doc_id: String,
+    state: State<'_, AppState>,
+) -> Result<crate::external_change::ExternalChangePoll, String> {
+    state
+        .sessions
+        .lock()
+        .map_err(|_| "문서 세션 잠금 실패".to_string())?
+        .poll_external_modification(&doc_id)
+}
+
+#[tauri::command]
 pub fn render_page_svg(
     doc_id: String,
     page_index: u32,

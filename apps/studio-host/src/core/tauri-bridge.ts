@@ -3,6 +3,7 @@ import type { DocumentInfo } from '@/upstream/core';
 import { remove, stat } from '@tauri-apps/plugin-fs';
 import { finiteFileSize, readFileInChunks, writeFileInChunks } from './chunked-fs';
 import { loadDocumentForOpen } from './document-open';
+import type { ExternalChangePoll } from './external-change-watcher';
 
 type DocumentFormat = 'hwp' | 'hwpx';
 
@@ -91,6 +92,8 @@ export interface DesktopBridgeApi {
   restartToApplyUpdate(): Promise<void>;
   hasUnsavedChanges(): boolean;
   markDocumentDirty(): void;
+  pollExternalChange(): Promise<ExternalChangePoll | null>;
+  reloadFromDisk(options: { discardChanges: boolean }): Promise<DesktopLoadPayload | null>;
   confirmWindowClose(): Promise<boolean>;
 }
 
@@ -288,6 +291,29 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
 
   hasUnsavedChanges(): boolean {
     return Boolean(this.docId && this.dirty);
+  }
+
+  // 다른 문서 작업(열기·저장) 중에는 묻지 않는다. 저장 중 임시 파일 교체를 바뀜으로 오인하지 않게.
+  async pollExternalChange(): Promise<ExternalChangePoll | null> {
+    if (!this.docId || !this.sourcePath || this.documentOperationPending) return null;
+    return this.invoke<ExternalChangePoll>('poll_external_modification', { docId: this.docId });
+  }
+
+  async reloadFromDisk({ discardChanges }: { discardChanges: boolean }): Promise<DesktopLoadPayload | null> {
+    const path = this.sourcePath;
+    if (!path || this.documentOperationPending) return null;
+    return this.withDocumentOperation(async () => {
+      const wasDirty = this.dirty;
+      if (discardChanges) this.dirty = false;
+      try {
+        const payload = await this.openDocumentPath(path);
+        if (!payload) this.dirty = wasDirty;
+        return payload;
+      } catch (error) {
+        this.dirty = wasDirty;
+        throw error;
+      }
+    });
   }
 
   markDocumentDirty(): void {

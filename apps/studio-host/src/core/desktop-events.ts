@@ -3,6 +3,8 @@ import type { EventBus } from '@/upstream/core';
 import { isTauriRuntime } from '@/core/bridge-factory';
 import { findLatestSupportedDocumentPath, hasSupportedDocumentPath } from '@/core/document-files';
 import type { DesktopBridgeApi, DesktopLoadPayload, DesktopUpdateState } from './tauri-bridge';
+import { ExternalChangeWatcher, isAutoReloadEnabled } from './external-change-watcher';
+import { ExternalChangeNotice } from '../ui/external-change-notice';
 
 type DesktopRuntimeBridge = Partial<
   Pick<
@@ -15,6 +17,8 @@ type DesktopRuntimeBridge = Partial<
     | 'cancelAppQuit'
     | 'hasUnsavedChanges'
     | 'getUpdateState'
+    | 'pollExternalChange'
+    | 'reloadFromDisk'
   >
 >;
 
@@ -100,6 +104,8 @@ export async function setupDesktopEvents({
     paths: pending ?? [],
     setMessage,
   });
+
+  startExternalChangeWatcher(desktop, eventBus);
 
   if (desktop.getUpdateState) {
     try {
@@ -208,4 +214,36 @@ async function openLatestDesktopDocument({
     setMessage(errMsg);
     console.error('[desktop-events] 데스크톱 파일 로드 실패:', error);
   }
+}
+
+// 에이전트 등이 열린 파일을 바꾸면 화면에 반영한다(localStorage kdoc.autoReload=off 로 끈다).
+function startExternalChangeWatcher(bridge: DesktopRuntimeBridge, eventBus: EventBus): void {
+  const { pollExternalChange, reloadFromDisk, hasUnsavedChanges } = bridge;
+  if (!pollExternalChange || !reloadFromDisk || !hasUnsavedChanges) return;
+  if (!isAutoReloadEnabled(globalThis.localStorage)) return;
+
+  const watcher = new ExternalChangeWatcher(
+    {
+      pollExternalChange: () => pollExternalChange.call(bridge),
+      hasUnsavedChanges: () => hasUnsavedChanges.call(bridge),
+      reloadFromDisk: async (options) => {
+        const scroll = currentScrollPosition();
+        const loaded = await reloadFromDisk.call(bridge, options);
+        if (!loaded) return false;
+        eventBus.emit('desktop-document-loaded', {
+          ...loaded,
+          message: `바뀐 내용을 불러왔어요 — ${loaded.message}`,
+          scroll,
+        });
+        return true;
+      },
+    },
+    new ExternalChangeNotice(),
+  );
+  watcher.start();
+}
+
+function currentScrollPosition(): { top: number; left: number } | undefined {
+  const container = document.getElementById('scroll-container');
+  return container ? { top: container.scrollTop, left: container.scrollLeft } : undefined;
 }
