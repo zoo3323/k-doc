@@ -3,7 +3,8 @@
 #
 # 1. scripts/prepare-rhwp.sh 로 upstream rhwp 를 받고 패치를 적용한다.
 # 2. 패치한 rhwp 로 WASM 을 빌드해 rhwp pkg/ 와 studio-host vendor 에 넣는다.
-# 3. pnpm 의존성을 설치하고 Tauri 로 앱을 만든다.
+# 3. 같은 rhwp 트리로 에이전트 도구(k-doc-agent)를 빌드해 앱에 함께 넣는다.
+# 4. pnpm 의존성을 설치하고 Tauri 로 앱을 만든다.
 #
 # 필요: rustup(+ wasm32-unknown-unknown), wasm-pack 0.15, Node 22+, pnpm 10(없으면 npx 사용)
 set -euo pipefail
@@ -19,6 +20,9 @@ VENDOR="$ROOT/apps/studio-host/vendor/rhwp-core"
 for f in rhwp.js rhwp_bg.wasm rhwp.d.ts rhwp_bg.wasm.d.ts package.json; do
   cp "$RHWP/pkg/$f" "$VENDOR/$f"
 done
+
+echo "[agent] 에이전트 도구 빌드"
+"$ROOT/scripts/build-agent-cli.sh" "$(rustc -vV | sed -n 's/^host: //p')"
 
 echo "[app] 앱 빌드"
 cd "$ROOT"

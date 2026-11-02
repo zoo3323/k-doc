@@ -46,3 +46,4 @@ Thumbs.db
 # 환경변수 (민감 정보)
 .env
 .env.docker
+apps/desktop/src-tauri/binaries/

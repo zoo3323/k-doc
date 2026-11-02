@@ -39,6 +39,18 @@ Apple 칩과 인텔 Mac 모두 됩니다. 새 버전이 나오면 같은 줄을 
 curl -fsSL https://raw.githubusercontent.com/zoo3323/k-doc/main/install/install-linux.sh | bash
 ```
 
+## 에이전트(Claude Code 등)로 쓰기
+
+K-Doc 에는 화면과 같은 엔진으로 만든 에이전트 도구 `k-doc-agent` 가 들어 있습니다. 에이전트가 MCP 로 문서를 열고 고치고 쪽을 그려 보면, 사람이 K-Doc 에서 보는 것과 같은 배치가 나옵니다. 에이전트가 파일을 고치면 열려 있는 K-Doc 화면이 알아서 다시 불러옵니다.
+
+macOS 에서 Claude Code 에 연결:
+
+```sh
+claude mcp add k-doc -- /Applications/K-Doc.app/Contents/MacOS/k-doc-agent mcp-serve
+```
+
+Windows 는 설치 폴더의 `k-doc-agent.exe`, Linux(.deb)는 `/usr/bin/k-doc-agent` 를 같은 방법으로 등록합니다.
+
 ## 직접 빌드
 
 필요한 것: rustup(`wasm32-unknown-unknown`), wasm-pack 0.15, Node 22+, pnpm 10

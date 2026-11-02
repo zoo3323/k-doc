@@ -116,8 +116,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri -> target
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            third_party/rhwp -> target
           key: ${{ matrix.name }}
+
+      # 화면 엔진과 같은 rhwp 트리로 에이전트 도구(CLI·MCP)를 빌드해 앱에 함께 넣는다(tauri externalBin).
+      - name: 에이전트 도구(k-doc-agent)
+        shell: bash
+        run: scripts/build-agent-cli.sh "${{ matrix.target }}"
 
       - name: 의존성 설치
         run: pnpm install --frozen-lockfile

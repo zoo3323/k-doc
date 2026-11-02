@@ -61,7 +61,7 @@ jobs:
       # test:upstream 의 HOP 시절 검사 7개는 K-Doc 워크플로와 맞지 않아 원래부터 실패한다(정리 대기).
       # K-Doc 이 관리하는 저장소 검사만 돌린다.
       - name: 저장소 검사
-        run: node --test tests/hop-version.test.mjs tests/file-associations.test.mjs
+        run: node --test tests/hop-version.test.mjs tests/file-associations.test.mjs tests/agent-cli-bundle.test.mjs
 
       - name: test:studio
         run: pnpm run test:studio
@@ -69,8 +69,54 @@ jobs:
       - name: build:studio
         run: pnpm run build:studio
 
+      # tauri.conf.json 의 externalBin(k-doc-agent)은 빌드 때 파일이 있어야 한다. 검사에서는 빈 자리표시를 둔다
+      # (실제 도구는 아래 parity 작업과 release 에서 빌드한다).
+      - name: 에이전트 도구 자리표시
+        run: |
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          mkdir -p apps/desktop/src-tauri/binaries
+          printf '#!/bin/sh\nexit 0\n' > "apps/desktop/src-tauri/binaries/k-doc-agent-$host"
+          chmod +x "apps/desktop/src-tauri/binaries/k-doc-agent-$host"
+
       - name: test:desktop
         run: pnpm run test:desktop
 
       - name: clippy:desktop
         run: pnpm run clippy:desktop
+
+  parity:
+    name: 에이전트 도구 = 화면 엔진 (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - name: rhwp 받기와 패치
+        run: scripts/prepare-rhwp.sh
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/rhwp -> target
+          key: agent-cli
+
+      - name: 에이전트 도구 빌드
+        run: scripts/build-agent-cli.sh x86_64-unknown-linux-gnu
+
+      # 에이전트가 MCP 로 그린 쪽과 K-Doc 화면 엔진(저장소 WASM)이 그린 쪽이 바이트까지 같은지 본다.
+      - name: 화면 일치 검사
+        run: |
+          node scripts/agent-parity.mjs \
+            --agent apps/desktop/src-tauri/binaries/k-doc-agent-x86_64-unknown-linux-gnu \
+            third_party/rhwp/samples/two_column_exam_floats/*.hwpx \
+            "third_party/rhwp/samples/2010-01-06.hwp" \
+            "third_party/rhwp/samples/2022년 국립국어원 업무계획.hwp"

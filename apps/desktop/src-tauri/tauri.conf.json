@@ -46,6 +46,9 @@
       "../../../third_party/rhwp/ttfs/opensource/NotoSansKR-Regular.ttf": "fonts/pdf/NotoSansKR-Regular.ttf",
       "../../../third_party/rhwp/ttfs/opensource/NotoSansKR-OFL.txt": "fonts/pdf/NotoSansKR-OFL.txt"
     },
+    "externalBin": [
+      "binaries/k-doc-agent"
+    ],
     "fileAssociations": [
       {
         "ext": [
