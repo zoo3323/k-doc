@@ -31,6 +31,12 @@ jobs:
       - name: rhwp 받기와 패치
         run: scripts/prepare-rhwp.sh
 
+      # 화면 빌드는 third_party/rhwp/pkg 의 WASM 을 찾는다. 검사에서는 다시 빌드하지 않고 저장소 사본을 쓴다.
+      - name: 저장소 WASM 사본 넣기
+        run: |
+          mkdir -p third_party/rhwp/pkg
+          cp apps/studio-host/vendor/rhwp-core/* third_party/rhwp/pkg/
+
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
