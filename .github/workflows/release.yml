@@ -174,17 +174,13 @@ jobs:
           name: K-Doc ${{ github.ref_name }}
           files: out/*
           body: |
-            ## 설치
-
-            🍎 **macOS**: 터미널에 아래 한 줄을 붙여 넣고 Enter (Apple 칩·인텔 자동, 경고 없음)
+            **macOS**: 터미널에 아래 줄을 붙여 넣고 Enter
 
             ```sh
             curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install/install-mac.sh | bash
             ```
 
-            | 운영체제 | 파일 |
-            | --- | --- |
-            | 🪟 Windows | `k-doc-windows-x64-setup.exe` |
-            | 🐧 Linux | `k-doc-linux-x64.deb` · `.AppImage` |
+            **Windows**: `k-doc-windows-x64-setup.exe`
+            **Linux**: `k-doc-linux-x64.deb` 또는 `.AppImage`
 
-            `k-doc-macos-*.zip` 은 위 설치 줄이 내려받는 파일입니다. 자세한 안내는 [설치](https://github.com/${{ github.repository }}#설치)를 보세요.
+            자세한 안내는 [설치](https://github.com/${{ github.repository }}#설치)를 보세요.
