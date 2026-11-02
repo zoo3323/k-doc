@@ -1,0 +1,70 @@
+name: check
+
+# 브랜치 push·PR 때 테스트와 clippy 를 돌린다. 로컬 맥에서는 Rust/WASM/Tauri 빌드를 하지 않으므로
+# (메모리가 모자라 멈춘다) 코드 변경은 이 검사로 확인한다. 저장소의 vendor WASM 을 그대로 쓴다.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10.33.0'
+  RUST_TOOLCHAIN: '1.93.1'
+
+jobs:
+  check:
+    name: 테스트·clippy (macOS)
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: rhwp 받기와 패치
+        run: scripts/prepare-rhwp.sh
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: pnpm
+        run: npm install -g pnpm@${{ env.PNPM_VERSION }}
+
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: check
+
+      - name: 의존성 설치
+        run: pnpm install --frozen-lockfile
+
+      # test:upstream 의 HOP 시절 검사 7개는 K-Doc 워크플로와 맞지 않아 원래부터 실패한다(정리 대기).
+      # K-Doc 이 관리하는 저장소 검사만 돌린다.
+      - name: 저장소 검사
+        run: node --test tests/hop-version.test.mjs tests/file-associations.test.mjs
+
+      - name: test:studio
+        run: pnpm run test:studio
+
+      - name: build:studio
+        run: pnpm run build:studio
+
+      - name: test:desktop
+        run: pnpm run test:desktop
+
+      - name: clippy:desktop
+        run: pnpm run clippy:desktop
