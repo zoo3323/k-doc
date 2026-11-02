@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RHWP="$ROOT/third_party/rhwp"
 BASE=ad4bf269ffef5adf2142b33004a9981fad7ce804
-MARKER="단 구분선을 머리 개체 띠 아래에서 시작하고 마지막 글줄에서 멈춘다"
+MARKER="호스트가 화면의 브라우저 측정 보충 치수를 끌 수 있게 한다"
 
 if [ ! -e "$RHWP/Cargo.toml" ]; then
   echo "[rhwp] upstream $BASE 받기"

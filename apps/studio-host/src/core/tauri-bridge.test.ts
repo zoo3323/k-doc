@@ -68,6 +68,14 @@ describe('TauriBridge', () => {
     removeMock.mockResolvedValue(undefined);
   });
 
+  it('화면도 portable 치수만 쓴다(에이전트 도구·PDF 와 같은 배치)', () => {
+    // 실제 끄는 동작은 patches/rhwp/0011 의 WasmBridge.prepareCanvasMetrics 가 맡는다.
+    const bridge = new TauriBridge();
+    expect(
+      (bridge as unknown as { supplementalCanvasMetricsEnabled: boolean }).supplementalCanvasMetricsEnabled,
+    ).toBe(false);
+  });
+
   it('opens a native document by path, mirrors bytes into wasm, and updates title state', async () => {
     const bridge = new TauriBridge();
     fsOpenMock.mockResolvedValue(readHandle([10, 20, 30]));

@@ -98,6 +98,9 @@ export interface DesktopBridgeApi {
 }
 
 export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
+  // 화면도 엔진 내장(portable) 치수로만 배치한다. 에이전트 도구(CLI/MCP)·PDF 와 같은 줄바꿈·쪽 나눔을
+  // 보장하려는 것(2026-11-02 사용자 결정 "화면도 엔진 치수만"). patches/rhwp/0011 참고.
+  protected override supplementalCanvasMetricsEnabled = false;
   private docId: string | null = null;
   private sourcePath: string | null = null;
   private sourceFormat: DocumentFormat = 'hwp';

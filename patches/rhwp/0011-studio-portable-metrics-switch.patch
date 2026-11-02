@@ -1,0 +1,48 @@
+From 5f73e24ac2b2d3c2a975b774ca05f03c1d745f02 Mon Sep 17 00:00:00 2001
+From: NamJu Kim <95582592+zoo3323@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 14:58:44 +0900
+Subject: [PATCH] =?UTF-8?q?feat(studio):=20=ED=98=B8=EC=8A=A4=ED=8A=B8?=
+ =?UTF-8?q?=EA=B0=80=20=ED=99=94=EB=A9=B4=EC=9D=98=20=EB=B8=8C=EB=9D=BC?=
+ =?UTF-8?q?=EC=9A=B0=EC=A0=80=20=EC=B8=A1=EC=A0=95=20=EB=B3=B4=EC=B6=A9=20?=
+ =?UTF-8?q?=EC=B9=98=EC=88=98=EB=A5=BC=20=EB=81=8C=20=EC=88=98=20=EC=9E=88?=
+ =?UTF-8?q?=EA=B2=8C=20=ED=95=9C=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+화면(canvas2d)은 엔진이 모르는 글꼴의 글자 폭을 measureText 로 보충해 배치한다.
+SVG/PDF 내보내기와 native CLI 는 보충 없이 portable 치수로 배치하므로, 그런 글꼴이 든 문서는
+줄바꿈·쪽 나눔이 화면과 달라질 수 있다. 에이전트(CLI/MCP)가 보는 배치와 사람이 보는 화면을
+같게 하려는 호스트(K-Doc)가 supplementalCanvasMetricsEnabled 를 끈다.
+---
+ rhwp-studio/src/core/wasm-bridge.ts | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index 5e07eba68..024f5f8cf 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -352,6 +352,12 @@ export class WasmBridge {
+ 
+   get canvasMetricFontGeneration(): number { return this.canvasFontGeneration; }
+ 
++  /**
++   * false 면 화면도 브라우저 측정 보충 없이 portable(엔진 내장) 치수로만 배치한다.
++   * 화면·SVG/PDF 내보내기·native CLI 가 같은 줄바꿈·쪽 나눔을 갖게 하려는 호스트가 끈다.
++   */
++  protected supplementalCanvasMetricsEnabled = true;
++
+   /** Discard suspect measurements without manufacturing an external font change. */
+   invalidateCanvasMetrics(): void {
+     this.canvasMetrics.invalidate();
+@@ -393,6 +399,7 @@ export class WasmBridge {
+     }
+     const metricDoc = this.canvasMetricDocument();
+     if (!metricDoc || !current()) return false;
++    if (!this.supplementalCanvasMetricsEnabled) return metricDoc.selectCanvasMetrics(false);
+     return this.canvasMetrics.prepare(metricDoc,
+       { document: this._documentGeneration, fonts: this.canvasFontGeneration }, backend,
+       current, () => document.fonts.ready, () => {
+-- 
+2.50.1 (Apple Git-155)
+
