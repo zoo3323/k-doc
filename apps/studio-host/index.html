@@ -39,11 +39,13 @@
           <div class="md-item" data-cmd="edit:cut"><span class="md-icon icon-cut"></span><span class="md-label">오려 두기</span><span class="md-shortcut">Ctrl+X</span></div>
           <div class="md-item" data-cmd="edit:copy"><span class="md-icon icon-copy"></span><span class="md-label">복사하기</span><span class="md-shortcut">Ctrl+C</span></div>
           <div class="md-item" data-cmd="edit:paste"><span class="md-icon icon-paste"></span><span class="md-label">붙이기</span><span class="md-shortcut">Ctrl+V</span></div>
-          <div class="md-item disabled" data-cmd="edit:format-copy"><span class="md-icon icon-format-copy"></span><span class="md-label">모양 복사</span><span class="md-shortcut">Ctrl+Alt+C</span></div>
+          <div class="md-item disabled" data-cmd="edit:paste-special"><span class="md-icon"></span><span class="md-label">골라 붙이기</span><span class="md-shortcut">Ctrl+Alt+V</span></div>
+          <div class="md-item disabled" data-cmd="edit:format-copy"><span class="md-icon icon-format-copy"></span><span class="md-label">모양 복사</span><span class="md-shortcut">Alt+C</span></div>
           <div class="md-item disabled" data-cmd="edit:format-paste"><span class="md-icon icon-format-copy"></span><span class="md-label">모양 붙여넣기</span></div>
           <div class="md-sep"></div>
           <div class="md-item disabled" data-cmd="edit:delete"><span class="md-icon icon-delete"></span><span class="md-label">지우기</span><span class="md-shortcut">Ctrl+E</span></div>
           <div class="md-item disabled" data-cmd="edit:select-all"><span class="md-icon icon-select-all"></span><span class="md-label">모두 선택</span><span class="md-shortcut">Ctrl+A</span></div>
+          <div class="md-item disabled" data-cmd="edit:toggle-insert-mode"><span class="md-icon"></span><span class="md-label">삽입/수정</span><span class="md-shortcut">Insert</span></div>
           <div class="md-sep"></div>
           <div class="md-item" data-cmd="edit:find"><span class="md-icon icon-find"></span><span class="md-label">찾기(F)</span><span class="md-shortcut">Ctrl+F</span></div>
           <div class="md-item" data-cmd="edit:find-replace"><span class="md-icon icon-find-replace"></span><span class="md-label">찾아 바꾸기(E)</span><span class="md-shortcut">Ctrl+F2</span></div>
@@ -424,6 +426,13 @@
           <div class="md-item disabled" data-cmd="table:decimal-remove"><span class="md-icon"></span><span class="md-label">자릿점 빼기</span></div>
         </div>
       </div>
+      <!-- ── 보안 ── -->
+      <div class="menu-item" data-menu="security">
+        <span class="menu-title">보안</span>
+        <div class="menu-dropdown">
+          <div class="md-item disabled" data-cmd="security:document-password"><span class="md-icon"></span><span class="md-label">문서 암호</span></div>
+        </div>
+      </div>
       <!-- ── 도구 ── -->
       <div class="menu-item" data-menu="tool">
         <span class="menu-title">도구</span>
@@ -441,7 +450,7 @@
         <button class="tb-btn tb-paste" data-cmd="edit:paste" title="붙이기 (Ctrl+V)">
           <span class="tb-sprite icon-paste"></span><span class="tb-label">붙이기</span>
         </button>
-        <button class="tb-btn" title="모양 복사"><span class="tb-sprite icon-format-copy"></span><span class="tb-label">모양<br/>복사</span></button>
+        <button class="tb-btn" data-cmd="edit:format-copy" title="모양 복사"><span class="tb-sprite icon-format-copy"></span><span class="tb-label">모양<br/>복사</span></button>
       </div>
       <span class="tb-sep"></span>
       <div class="tb-group">
@@ -685,7 +694,7 @@
       <span class="stb-divider"></span>
       <span id="sb-section" class="stb-item">구역: 1 / 1</span>
       <span class="stb-divider"></span>
-      <span id="sb-mode" class="stb-item">삽입</span>
+      <span id="sb-mode" class="stb-item" title="눌러서 삽입/수정 바꾸기" style="cursor:pointer">삽입</span>
       <span id="sb-field" class="stb-item" style="display:none"></span>
       <span id="sb-message" class="stb-message"></span>
       <span class="stb-right">

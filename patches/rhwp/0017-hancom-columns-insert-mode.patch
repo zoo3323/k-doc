@@ -1,0 +1,210 @@
+From a4babc1caba37de4450ff291d4ca0bd720b93a05 Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 16:06:27 +0900
+Subject: [PATCH] =?UTF-8?q?feat(hancom):=20=EB=8B=A8=20=EC=99=BC=EC=AA=BD/?=
+ =?UTF-8?q?=EC=98=A4=EB=A5=B8=EC=AA=BD=20=EB=B9=84=EC=9C=A8=20=EB=8B=A4?=
+ =?UTF-8?q?=EB=8B=A8,=20=EC=82=BD=EC=9E=85/=EC=88=98=EC=A0=95=20=EB=B0=94?=
+ =?UTF-8?q?=EA=BE=B8=EA=B8=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- setColumnRatios: 단마다 너비가 다른 다단(한컴 비례값 32768), 「단 → 왼쪽/오른쪽」이 서로 다르게
+- InputHandler.toggleInsertMode: 맥에 없는 Insert 키 대신 메뉴·상황 선에서
+---
+ rhwp-studio/src/command/commands/page.ts      |  4 +-
+ .../src/core/mutation-method-registry.ts      |  2 +-
+ rhwp-studio/src/core/wasm-bridge.ts           |  6 ++
+ rhwp-studio/src/engine/input-handler.ts       |  7 ++
+ src/document_core/commands/text_editing.rs    | 75 +++++++++++++++++++
+ src/wasm_api.rs                               | 14 ++++
+ 6 files changed, 105 insertions(+), 3 deletions(-)
+
+diff --git a/rhwp-studio/src/command/commands/page.ts b/rhwp-studio/src/command/commands/page.ts
+index 905adca0a..9b2d4f42e 100644
+--- a/rhwp-studio/src/command/commands/page.ts
++++ b/rhwp-studio/src/command/commands/page.ts
+@@ -579,7 +579,7 @@ export const pageCommands: CommandDef[] = [
+           kind: 'snapshot',
+           operationType: 'setColumnDef',
+           operation: (wasm) => {
+-            wasm.setColumnDef(pos.sectionIndex, 2, 0, 0, 2268);
++            wasm.setColumnRatios(pos.sectionIndex, [1, 2], 2268); // 한글: 왼쪽 단이 좁게
+             return pos;
+           },
+           meta: { actionId: 'page:col-left', domain: 'page', refresh: 'full', dirtyScope: 'document' },
+@@ -600,7 +600,7 @@ export const pageCommands: CommandDef[] = [
+           kind: 'snapshot',
+           operationType: 'setColumnDef',
+           operation: (wasm) => {
+-            wasm.setColumnDef(pos.sectionIndex, 2, 0, 0, 2268);
++            wasm.setColumnRatios(pos.sectionIndex, [2, 1], 2268); // 한글: 오른쪽 단이 좁게
+             return pos;
+           },
+           meta: { actionId: 'page:col-right', domain: 'page', refresh: 'full', dirtyScope: 'document' },
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 375351310..caa974976 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -35,7 +35,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'insertTableColumn', 'deleteTableRow', 'deleteTableColumn', 'mergeTableCells',
+   'splitTableCell', 'splitTableCellInto', 'splitTableCellsInRange', 'resizeTableCells',
+   'equalizeTableCells', // 한글 셀 너비/높이를 같게
+-  'insertPageNumberField', 'insertParagraphBand', 'setPageNumberPos', 'applyFootnoteShape', 'insertCharOverlap', 'convertNotes', 'textToTable', 'tableToText',
++  'insertPageNumberField', 'insertParagraphBand', 'setPageNumberPos', 'applyFootnoteShape', 'insertCharOverlap', 'convertNotes', 'textToTable', 'tableToText', 'setColumnRatios',
+   'resizeTableCellsByPath', // [#7189] 중첩 표 셀 크기 조절 — 평면 resizeTableCells 의 경로 변형
+   'moveTableOffset', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
+   'applyCellBorderFillIds', 'removeBorderFillTails',
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index f1b686702..b61aaa7aa 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -2700,6 +2700,12 @@ export class WasmBridge {
+     return JSON.parse((this.doc as any).tableToText(sec, parentPara, controlIdx, separator));
+   }
+ 
++  /** 한글 「단 → 왼쪽/오른쪽」 — 단 너비 비율(예: [1,2])과 간격으로 다단. */
++  setColumnRatios(sec: number, ratios: number[], spacingHu: number): { ok: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).setColumnRatios(sec, JSON.stringify(ratios), spacingHu));
++  }
++
+   /** 한글 「문단 띠」 — 캐럿 문단에 본문 폭 검정 띠(1mm)를 넣는다. */
+   insertParagraphBand(sec: number, para: number, charOffset: number): { ok: boolean; paraIdx: number; controlIdx: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
+index 151794d39..4a9c4ba0e 100644
+--- a/rhwp-studio/src/engine/input-handler.ts
++++ b/rhwp-studio/src/engine/input-handler.ts
+@@ -6122,6 +6122,13 @@ export class InputHandler {
+     }
+   }
+ 
++  /** 한글 삽입/수정(덮어쓰기) 바꾸기 — 맥 키보드에는 Insert 키가 없어 메뉴·상황 선에서 부른다. */
++  toggleInsertMode(): void {
++    this.insertMode = !this.insertMode;
++    this.eventBus.emit('insert-mode-changed', this.insertMode);
++    this.focusTextarea();
++  }
++
+   /** 한글 「개요 적용/해제」: 개요가 아니면 1수준 개요로, 개요면 해제. */
+   toggleOutline(): void {
+     try {
+diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
+index 1e0adf2b9..fd1aef852 100644
+--- a/src/document_core/commands/text_editing.rs
++++ b/src/document_core/commands/text_editing.rs
+@@ -4213,6 +4213,51 @@ impl DocumentCore {
+         )))
+     }
+ 
++    /// 한글 「단 → 왼쪽/오른쪽」처럼 단마다 너비가 다른 다단. `ratios` 는 단 너비 비율
++    /// (예: 왼쪽 `[1, 2]`, 오른쪽 `[2, 1]`), `spacing_hu` 는 단 사이 간격이다. 한컴처럼
++    /// 비례값(합 32768)으로 저장한다.
++    pub fn set_column_ratios_native(
++        &mut self,
++        section_idx: usize,
++        ratios: &[u16],
++        spacing_hu: i16,
++    ) -> Result<String, HwpError> {
++        use crate::model::page::ColumnDef;
++        if ratios.len() < 2 || ratios.len() > 255 || ratios.iter().any(|&r| r == 0) {
++            return Err(HwpError::RenderError("단 너비 비율은 둘 이상, 0 이 아니어야 합니다".into()));
++        }
++        let count = ratios.len() as u16;
++        self.set_column_def_native(section_idx, count, 0, false, spacing_hu)?;
++        let pd = &self.document.sections[section_idx].section_def.page_def;
++        let body = (pd.width as i64 - pd.margin_left as i64 - pd.margin_right as i64 - pd.margin_gutter as i64).max(1) as f64;
++        const TOTAL: f64 = 32768.0;
++        let gap = ((spacing_hu.max(0) as f64 / body) * TOTAL).round();
++        let usable = (TOTAL - gap * (ratios.len() - 1) as f64).max(ratios.len() as f64);
++        let sum: f64 = ratios.iter().map(|&r| r as f64).sum();
++        let mut widths: Vec<i16> = ratios.iter().map(|&r| (usable * r as f64 / sum).floor() as u16 as i16).collect();
++        // 반올림 나머지는 마지막 단에 얹어 합을 32768 로 맞춘다.
++        let used: i64 = widths.iter().map(|&w| w as u16 as i64).sum::<i64>() + gap as i64 * (ratios.len() as i64 - 1);
++        if let Some(last) = widths.last_mut() {
++            *last = ((*last as u16 as i64) + (TOTAL as i64 - used)) as u16 as i16;
++        }
++        let gaps: Vec<i16> = (0..ratios.len()).map(|i| if i + 1 < ratios.len() { gap as u16 as i16 } else { 0 }).collect();
++        for para in self.document.sections[section_idx].paragraphs.iter_mut() {
++            if let Some(Control::ColumnDef(cd)) = para.controls.iter_mut().find(|c| matches!(c, Control::ColumnDef(_))) {
++                let cd: &mut ColumnDef = cd;
++                cd.same_width = false;
++                cd.proportional_widths = true;
++                cd.widths = widths.clone();
++                cd.gaps = gaps.clone();
++                cd.raw_attr = 0;
++                break;
++            }
++        }
++        self.reflow_body_paragraphs_in_section(section_idx);
++        self.document.sections[section_idx].raw_stream = None;
++        self.rebuild_section(section_idx);
++        Ok(crate::document_core::helpers::json_ok())
++    }
++
+     /// 다단 설정 변경
+     ///
+     /// 구역의 초기 ColumnDef 컨트롤을 찾아 수정한다.
+@@ -7937,3 +7982,33 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod column_ratio_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    #[test]
++    fn left_preset_makes_a_narrow_left_column() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.set_column_ratios_native(0, &[1, 2], 2268).expect("ratios");
++        let cd = core.document.sections[0]
++            .paragraphs
++            .iter()
++            .flat_map(|p| p.controls.iter())
++            .find_map(|c| match c {
++                Control::ColumnDef(cd) => Some(cd.clone()),
++                _ => None,
++            })
++            .expect("단 정의");
++        assert_eq!(cd.column_count, 2);
++        assert!(!cd.same_width && cd.proportional_widths);
++        let w: Vec<u16> = cd.widths.iter().map(|&w| w as u16).collect();
++        assert!(w[0] * 2 <= w[1] + 2, "왼쪽 단이 좁다: {w:?}");
++        let total: u32 = w.iter().map(|&v| v as u32).sum::<u32>() + cd.gaps.iter().map(|&g| g as u16 as u32).sum::<u32>();
++        assert_eq!(total, 32768);
++        let saved = core.export_hwp_native().expect("save");
++        DocumentCore::from_bytes(&saved).expect("reopen");
++    }
++}
+diff --git a/src/wasm_api.rs b/src/wasm_api.rs
+index ea9cd332a..87905e7f2 100644
+--- a/src/wasm_api.rs
++++ b/src/wasm_api.rs
+@@ -2777,6 +2777,20 @@ impl HwpDocument {
+     /// 다단 설정 변경
+     /// column_type: 0=일반, 1=배분, 2=평행
+     /// same_width: 0=다른 너비, 1=같은 너비
++    /// 단마다 너비가 다른 다단(한글 「단 → 왼쪽/오른쪽」). `ratios_json`: `[1,2]` 꼴.
++    #[wasm_bindgen(js_name = setColumnRatios)]
++    pub fn set_column_ratios(
++        &mut self,
++        section_idx: u32,
++        ratios_json: &str,
++        spacing_hu: i32,
++    ) -> Result<String, JsValue> {
++        let ratios: Vec<u16> = serde_json::from_str(ratios_json)
++            .map_err(|e| JsValue::from_str(&format!("단 비율 JSON 오류: {e}")))?;
++        self.set_column_ratios_native(section_idx as usize, &ratios, spacing_hu.clamp(0, i16::MAX as i32) as i16)
++            .map_err(|e| e.into())
++    }
++
+     #[wasm_bindgen(js_name = setColumnDef)]
+     pub fn set_column_def(
+         &mut self,
+-- 
+2.50.1 (Apple Git-155)
+

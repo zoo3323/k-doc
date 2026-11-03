@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RHWP="$ROOT/third_party/rhwp"
 BASE=ad4bf269ffef5adf2142b33004a9981fad7ce804
-MARKER="쪽 번호 매기기, 각주 모양, 글자 겹치기, 각주/미주 변환, 문자열↔표"
+MARKER="단 왼쪽/오른쪽 비율 다단, 삽입/수정 바꾸기"
 
 if [ ! -e "$RHWP/Cargo.toml" ]; then
   echo "[rhwp] upstream $BASE 받기"

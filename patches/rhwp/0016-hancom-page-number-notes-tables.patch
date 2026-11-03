@@ -1,4 +1,4 @@
-From 1e28aa3eea18fa09dd0074adac4d2d3c49339e6c Mon Sep 17 00:00:00 2001
+From 2281d36fad43832eee37a1b8c2ed49a6d8f759c0 Mon Sep 17 00:00:00 2001
 From: k-doc <k-doc@localhost>
 Date: Tue, 3 Nov 2026 16:00:08 +0900
 Subject: [PATCH] =?UTF-8?q?feat(hancom):=20=EC=AA=BD=20=EB=B2=88=ED=98=B8?=
@@ -25,10 +25,10 @@ Content-Transfer-Encoding: 8bit
  src/document_core/commands/footnote_ops.rs    | 105 ++++++++++-
  src/document_core/commands/formatting.rs      | 119 +++++++++++++
  .../commands/object_ops/shape.rs              |  83 +++++++--
- .../commands/object_ops/table.rs              | 163 ++++++++++++++++++
+ .../commands/object_ops/table.rs              | 164 ++++++++++++++++++
  src/document_core/queries/bookmark_query.rs   |  91 ++++++++++
  src/wasm_api.rs                               |  93 ++++++++++
- 12 files changed, 732 insertions(+), 38 deletions(-)
+ 12 files changed, 733 insertions(+), 38 deletions(-)
 
 diff --git a/rhwp-studio/src/command/commands/insert.ts b/rhwp-studio/src/command/commands/insert.ts
 index cfb4b2238..81b4c0631 100644
@@ -641,13 +641,14 @@ index a2518dc35..e0ce685d7 100644
 +    }
 +}
 diff --git a/src/document_core/commands/object_ops/table.rs b/src/document_core/commands/object_ops/table.rs
-index 64d0cc29b..cc1915307 100644
+index 64d0cc29b..dd710fc26 100644
 --- a/src/document_core/commands/object_ops/table.rs
 +++ b/src/document_core/commands/object_ops/table.rs
-@@ -391,6 +391,129 @@ impl DocumentCore {
-             }
-         }
+@@ -393,6 +393,130 @@ impl DocumentCore {
  
+         Err(HwpError::RenderError("경로가 비어있습니다".to_string()))
+     }
++
 +    /// 한글 「표 → 문자열을 표로」: 문단 `start_para..=end_para` 를 표 하나로 바꾼다.
 +    /// 문단 하나가 한 줄, `separator` 로 나눈 조각이 한 칸이다. 반환에 표 자리와 줄·칸 수.
 +    pub fn text_to_table_native(
@@ -771,10 +772,10 @@ index 64d0cc29b..cc1915307 100644
 +        ))
 +    }
 +
-         Err(HwpError::RenderError("경로가 비어있습니다".to_string()))
-     }
      /// 커서 위치에 새 표를 삽입한다 (네이티브).
-@@ -1770,3 +1893,43 @@ mod tests {
+     ///
+     /// 1. PageDef에서 편집 영역 폭 계산
+@@ -1770,3 +1894,43 @@ mod tests {
          assert_cells_inherit_cursor_shape(table_of(&core));
      }
  }

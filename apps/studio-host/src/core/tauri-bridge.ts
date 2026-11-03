@@ -98,6 +98,8 @@ export interface DesktopBridgeApi {
 }
 
 export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
+  /** 저장할 때 걸 HWP 암호(연 암호 또는 「문서 암호」로 정한 것). */
+  private savePassword: string | null = null;
   // 화면도 엔진 내장(portable) 치수로만 배치한다. 에이전트 도구(CLI/MCP)·PDF 와 같은 줄바꿈·쪽 나눔을
   // 보장하려는 것(2026-11-02 사용자 결정 "화면도 엔진 치수만"). patches/rhwp/0011 참고.
   protected override supplementalCanvasMetricsEnabled = false;
@@ -135,12 +137,14 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
     });
     const previousDocId = this.docId;
     try {
-      const info = await loadDocumentForOpen(this, bytes, result.fileName);
+      let openedPassword: string | null = null;
+      const info = await loadDocumentForOpen(this, bytes, result.fileName, (password) => { openedPassword = password; });
       if (!info) {
         await this.closeNativeDocument(result.docId);
         return null;
       }
       this.applyNativeOpenResult(result, this.normalizedSourceFormat(super.getSourceFormat()));
+      this.savePassword = openedPassword;
       await this.noteFinderRecentDocument(path);
       await this.recordRecentDocument(path);
       await this.closeReplacedDocument(previousDocId, result.docId);
@@ -195,7 +199,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
 
   private async saveDocument(): Promise<DesktopSaveResult | null> {
     const docId = this.ensureDocumentLoaded();
-    if (this.requiresPasswordForSave) {
+    if (this.requiresPasswordForSave && !this.savePassword) {
       throw new Error('암호 문서의 원본 저장은 아직 지원하지 않습니다. 다른 이름으로 저장에서 암호 없는 HWP 파일로 저장하세요.');
     }
     if (!this.sourcePath) {
@@ -215,7 +219,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
     const docId = this.ensureDocumentLoaded();
     const targetPath = await this.selectSavePath(this.suggestedHwpName(), 'HWP 문서', ['hwp']);
     if (!targetPath) return null;
-    if (this.requiresPasswordForSave) {
+    if (this.requiresPasswordForSave && !this.savePassword) {
       const { message } = await import('@tauri-apps/plugin-dialog');
       const choice = await message('저장한 HWP 파일에는 암호가 적용되지 않습니다. 암호 없이 저장하시겠습니까?', {
         title: '암호 없이 저장', kind: 'warning',
@@ -388,6 +392,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
     }
     this.docId = null;
     this.sourcePath = null;
+    this.savePassword = null;
     this.dirty = false;
     this.updateDocumentTitle();
   }
@@ -491,7 +496,7 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
   }
 
   private async saveCurrentDocumentForSafety(): Promise<DesktopSaveResult | null> {
-    if (this.sourceFormat === 'hwpx' || this.requiresPasswordForSave) {
+    if (this.sourceFormat === 'hwpx' || (this.requiresPasswordForSave && !this.savePassword)) {
       return this.saveDocumentAs();
     }
     return this.saveDocument();
@@ -529,7 +534,20 @@ export class TauriBridge extends WasmBridge implements DesktopBridgeApi {
   }
 
   private async writeCurrentHwpToPath(path: string): Promise<void> {
-    await writeFileInChunks(path, super.exportHwp());
+    await writeFileInChunks(
+      path,
+      this.savePassword ? super.exportHwpWithPassword(this.savePassword) : super.exportHwp(),
+    );
+  }
+
+  /** 한글 「보안 → 문서 암호」: 다음 저장부터 이 암호로 HWP 를 쓴다. null 이면 암호 없이. */
+  setSavePassword(password: string | null): void {
+    this.savePassword = password && password.length > 0 ? password : null;
+    if (!this.savePassword) this.requiresPasswordForSave = false;
+  }
+
+  hasSavePassword(): boolean {
+    return this.savePassword !== null;
   }
 
   private withExtension(path: string, extension: string): string {

@@ -439,6 +439,126 @@ function tableToText(services: Services): void {
   }).show();
 }
 
+// ─── 보안 → 문서 암호 ─────────────────────────────────────
+type PasswordBridge = { setSavePassword?: (password: string | null) => void; hasSavePassword?: () => boolean };
+
+class DocumentPasswordDialog extends ModalDialog {
+  private first!: HTMLInputElement;
+  private second!: HTMLInputElement;
+  private note!: HTMLDivElement;
+
+  constructor(private services: Services, private bridge: PasswordBridge) {
+    super('문서 암호', 300);
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gridTemplateColumns = 'auto 1fr';
+    body.style.gap = '8px 10px';
+    body.style.alignItems = 'center';
+    this.first = document.createElement('input');
+    this.first.type = 'password';
+    this.second = document.createElement('input');
+    this.second.type = 'password';
+    this.note = document.createElement('div');
+    this.note.style.gridColumn = '1 / -1';
+    this.note.style.fontSize = '12px';
+    this.note.textContent = this.bridge.hasSavePassword?.()
+      ? '비워 두고 확인하면 암호를 풉니다.'
+      : '5자 이상. 저장할 때 적용됩니다.';
+    body.append(document.createTextNode('암호'), this.first, document.createTextNode('암호 확인'), this.second, this.note);
+    return body;
+  }
+
+  show(): void {
+    super.show();
+    setTimeout(() => this.first.focus(), 30);
+  }
+
+  protected onConfirm(): boolean {
+    const a = this.first.value;
+    const b = this.second.value;
+    if (a !== b) {
+      this.note.textContent = '두 암호가 다릅니다.';
+      return false;
+    }
+    if (a.length > 0 && a.length < 5) {
+      this.note.textContent = '5자 이상 입력하세요.';
+      return false;
+    }
+    if (!a && !this.bridge.hasSavePassword?.()) return true;
+    this.bridge.setSavePassword?.(a || null);
+    this.services.eventBus.emit('document-changed', 'document-password');
+    showToast({ message: a ? '저장할 때 암호를 겁니다.' : '저장할 때 암호를 풉니다.' });
+    return true;
+  }
+}
+
+function openDocumentPassword(services: Services): void {
+  const bridge = services.wasm as unknown as PasswordBridge;
+  if (typeof bridge.setSavePassword !== 'function') {
+    showToast({ message: '데스크톱 앱에서만 문서 암호를 걸 수 있어요.' });
+    return;
+  }
+  new DocumentPasswordDialog(services, bridge).show();
+}
+
+// ─── 편집 → 골라 붙이기 ───────────────────────────────────
+class PasteSpecialDialog extends ModalDialog {
+  private keep!: HTMLInputElement;
+
+  constructor(private services: Services) {
+    super('골라 붙이기', 280);
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gap = '8px';
+    const radio = (label: string, checked: boolean) => {
+      const row = document.createElement('label');
+      row.style.display = 'flex';
+      row.style.gap = '6px';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'kdoc-paste-special';
+      input.checked = checked;
+      row.append(input, document.createTextNode(label));
+      body.appendChild(row);
+      return input;
+    };
+    this.keep = radio('원래 모양 유지', true);
+    radio('글자만', false);
+    return body;
+  }
+
+  protected onConfirm(): boolean {
+    const ih = this.services.getInputHandler();
+    if (!ih) return true;
+    if (this.keep.checked) {
+      setTimeout(() => { (ih as unknown as { performPaste?: () => unknown }).performPaste?.(); }, 0);
+      return true;
+    }
+    void (async () => {
+      let text = '';
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        showToast({ message: '클립보드 글을 읽지 못했어요.' });
+        return;
+      }
+      if (!text) return;
+      ih.executeOperation({ kind: 'command', command: new InsertTextCommand(ih.getCursorPosition(), text.replace(/\r\n?/g, '\n')) });
+      this.services.eventBus.emit('document-changed');
+      ih.focus();
+    })();
+    return true;
+  }
+}
+
 // ─── 쪽 → 쪽 번호 매기기 ─────────────────────────────────
 const PAGE_NUMBER_POSITIONS: ReadonlyArray<[number, string]> = [
   [0, '없음'],
@@ -619,6 +739,27 @@ export const hancomCommands: CommandDef[] = [
     label: '표를 문자열로',
     canExecute: (ctx) => ctx.hasDocument && ctx.isEditable && ctx.inTable,
     execute(services) { tableToText(services); },
+  },
+  {
+    id: 'security:document-password',
+    label: '문서 암호',
+    canExecute: (ctx) => ctx.hasDocument,
+    execute(services) { openDocumentPassword(services); },
+  },
+  {
+    id: 'edit:paste-special',
+    label: '골라 붙이기',
+    shortcutLabel: 'Ctrl+Alt+V',
+    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable,
+    execute(services) { new PasteSpecialDialog(services).show(); },
+  },
+  {
+    id: 'edit:toggle-insert-mode',
+    label: '삽입/수정',
+    canExecute: (ctx) => ctx.hasDocument,
+    execute(services) {
+      (services.getInputHandler() as unknown as { toggleInsertMode?: () => void } | null)?.toggleInsertMode?.();
+    },
   },
   {
     id: 'page:page-number-pos',

@@ -7,6 +7,7 @@ type DocumentLoader = Pick<WasmBridge, 'loadDocument' | 'loadDocumentWithPasswor
 // limited to password prompting; filesystem and session ownership stay native.
 export async function loadDocumentForOpen(
   wasm: DocumentLoader, bytes: Uint8Array, fileName: string,
+  onPassword?: (password: string) => void,
 ): Promise<DocumentInfo | null> {
   try {
     return wasm.loadDocument(bytes, fileName);
@@ -20,6 +21,8 @@ export async function loadDocumentForOpen(
     if (password === null) return null;
     try {
       wasm.loadDocumentWithPassword(bytes, password, fileName);
+      // 연 암호를 알려 두면 원래 파일에 같은 암호로 다시 저장할 수 있다.
+      onPassword?.(password);
       return wasm.getDocumentInfo();
     } catch (error) {
       const message = String(error);

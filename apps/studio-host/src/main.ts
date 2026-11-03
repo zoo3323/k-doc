@@ -475,6 +475,10 @@ function setupEventListeners(): void {
   });
 
   // 삽입/수정 모드 토글
+  // 상황 선의 「삽입/수정」을 누르면 바꾼다(맥에는 Insert 키가 없다).
+  document.getElementById('sb-mode')?.addEventListener('click', () => {
+    (inputHandler as unknown as { toggleInsertMode?: () => void } | null)?.toggleInsertMode?.();
+  });
   eventBus.on('insert-mode-changed', (insertMode) => {
     document.getElementById('sb-mode')!.textContent = (insertMode as boolean) ? '삽입' : '수정';
   });
