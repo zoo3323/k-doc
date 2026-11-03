@@ -1522,6 +1522,34 @@ export class HwpDocument {
         }
     }
     /**
+     * 표 셀/글상자 내부 수식 삭제 (by_path).
+     * @param {number} section_idx
+     * @param {number} parent_para_idx
+     * @param {string} cell_path_json
+     * @param {number} inner_control_idx
+     * @returns {string}
+     */
+    deleteCellEquationControlByPath(section_idx, parent_para_idx, cell_path_json, inner_control_idx) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(cell_path_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.hwpdocument_deleteCellEquationControlByPath(this.__wbg_ptr, section_idx, parent_para_idx, ptr0, len0, inner_control_idx);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * [Task #1171 / PR #1254] 표 셀/글상자 내부 Picture 삭제 (by_path).
      * @param {number} section_idx
      * @param {number} parent_para_idx
@@ -4044,13 +4072,14 @@ export class HwpDocument {
      * @param {number} control_idx
      * @param {number} cell_idx
      * @param {number} cell_para_idx
+     * @param {number | null} [inner_control_idx]
      * @returns {string}
      */
-    getEquationProperties(section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx) {
+    getEquationProperties(section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, inner_control_idx) {
         let deferred2_0;
         let deferred2_1;
         try {
-            const ret = wasm.hwpdocument_getEquationProperties(this.__wbg_ptr, section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx);
+            const ret = wasm.hwpdocument_getEquationProperties(this.__wbg_ptr, section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, isLikeNone(inner_control_idx) ? Number.MAX_SAFE_INTEGER : (inner_control_idx) >>> 0);
             var ptr1 = ret[0];
             var len1 = ret[1];
             if (ret[3]) {
@@ -7587,6 +7616,42 @@ export class HwpDocument {
         }
     }
     /**
+     * 표 셀 안 문단에 수식을 글자처럼 넣는다.
+     *
+     * `cell_path_json`: `[{"controlIndex":N,"cellIndex":N,"cellParaIndex":N}, ...]`.
+     * 반환: `{"ok":true,"paraIdx":<바깥 문단>,"controlIdx":<셀 문단 안 컨트롤>}`
+     * @param {number} section_idx
+     * @param {number} parent_para_idx
+     * @param {string} cell_path_json
+     * @param {number} char_offset
+     * @param {string} script
+     * @param {number} font_size
+     * @param {number} color
+     * @returns {string}
+     */
+    insertEquationInCell(section_idx, parent_para_idx, cell_path_json, char_offset, script, font_size, color) {
+        let deferred4_0;
+        let deferred4_1;
+        try {
+            const ptr0 = passStringToWasm0(cell_path_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passStringToWasm0(script, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ret = wasm.hwpdocument_insertEquationInCell(this.__wbg_ptr, section_idx, parent_para_idx, ptr0, len0, char_offset, ptr1, len1, font_size, color);
+            var ptr3 = ret[0];
+            var len3 = ret[1];
+            if (ret[3]) {
+                ptr3 = 0; len3 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred4_0 = ptr3;
+            deferred4_1 = len3;
+            return getStringFromWasm0(ptr3, len3);
+        } finally {
+            wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
      * 머리말/꼬리말 문단에 필드 마커를 삽입한다.
      * @param {number} section_idx
      * @param {boolean} is_header
@@ -7822,6 +7887,50 @@ export class HwpDocument {
             return getStringFromWasm0(ptr3, len3);
         } finally {
             wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+        }
+    }
+    /**
+     * 표 셀 문단 안에 자리차지 그림을 넣는다(한글 기본, 셀과 함께 움직임).
+     * 셀 안쪽 폭보다 넓으면 비율을 지켜 줄인다.
+     *
+     * 반환: `{"ok":true,"paraIdx":<바깥 문단>,"controlIdx":<셀 문단 안 컨트롤>,"width":W,"height":H}`
+     * @param {number} section_idx
+     * @param {number} parent_para_idx
+     * @param {string} cell_path_json
+     * @param {number} char_offset
+     * @param {Uint8Array} image_data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} natural_width_px
+     * @param {number} natural_height_px
+     * @param {string} extension
+     * @param {string} description
+     * @returns {string}
+     */
+    insertPictureInCellParagraph(section_idx, parent_para_idx, cell_path_json, char_offset, image_data, width, height, natural_width_px, natural_height_px, extension, description) {
+        let deferred6_0;
+        let deferred6_1;
+        try {
+            const ptr0 = passStringToWasm0(cell_path_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ptr1 = passArray8ToWasm0(image_data, wasm.__wbindgen_malloc);
+            const len1 = WASM_VECTOR_LEN;
+            const ptr2 = passStringToWasm0(extension, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len2 = WASM_VECTOR_LEN;
+            const ptr3 = passStringToWasm0(description, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len3 = WASM_VECTOR_LEN;
+            const ret = wasm.hwpdocument_insertPictureInCellParagraph(this.__wbg_ptr, section_idx, parent_para_idx, ptr0, len0, char_offset, ptr1, len1, width, height, natural_width_px, natural_height_px, ptr2, len2, ptr3, len3);
+            var ptr5 = ret[0];
+            var len5 = ret[1];
+            if (ret[3]) {
+                ptr5 = 0; len5 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred6_0 = ptr5;
+            deferred6_1 = len5;
+            return getStringFromWasm0(ptr5, len5);
+        } finally {
+            wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
         }
     }
     /**
@@ -10745,15 +10854,16 @@ export class HwpDocument {
      * @param {number} cell_idx
      * @param {number} cell_para_idx
      * @param {string} props_json
+     * @param {number | null} [inner_control_idx]
      * @returns {string}
      */
-    setEquationProperties(section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, props_json) {
+    setEquationProperties(section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, props_json, inner_control_idx) {
         let deferred3_0;
         let deferred3_1;
         try {
             const ptr0 = passStringToWasm0(props_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len0 = WASM_VECTOR_LEN;
-            const ret = wasm.hwpdocument_setEquationProperties(this.__wbg_ptr, section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, ptr0, len0);
+            const ret = wasm.hwpdocument_setEquationProperties(this.__wbg_ptr, section_idx, parent_para_idx, control_idx, cell_idx, cell_para_idx, ptr0, len0, isLikeNone(inner_control_idx) ? Number.MAX_SAFE_INTEGER : (inner_control_idx) >>> 0);
             var ptr2 = ret[0];
             var len2 = ret[1];
             if (ret[3]) {

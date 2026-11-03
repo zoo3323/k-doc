@@ -70,6 +70,7 @@ export const hwpdocument_createTable: (a: number, b: number, c: number, d: numbe
 export const hwpdocument_createTableEx: (a: number, b: number, c: number) => [number, number, number, number];
 export const hwpdocument_deleteAtCursor: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const hwpdocument_deleteBookmark: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const hwpdocument_deleteCellEquationControlByPath: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const hwpdocument_deleteCellPictureControlByPath: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const hwpdocument_deleteCellTableControlByPath: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const hwpdocument_deleteControlAt: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -181,7 +182,7 @@ export const hwpdocument_getDocumentFontSelectionPlan: (a: number) => [number, n
 export const hwpdocument_getDocumentInfo: (a: number) => [number, number];
 export const hwpdocument_getDpi: (a: number) => number;
 export const hwpdocument_getEndnoteShape: (a: number, b: number) => [number, number, number, number];
-export const hwpdocument_getEquationProperties: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const hwpdocument_getEquationProperties: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const hwpdocument_getEventLog: (a: number) => [number, number];
 export const hwpdocument_getExternalImageBasenames: (a: number) => [number, number];
 export const hwpdocument_getExternalImageReferences: (a: number) => [number, number];
@@ -336,6 +337,7 @@ export const hwpdocument_insertClickHereFieldInCellEx: (a: number, b: number, c:
 export const hwpdocument_insertColumnBreak: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const hwpdocument_insertEndnote: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const hwpdocument_insertEquation: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const hwpdocument_insertEquationInCell: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
 export const hwpdocument_insertFieldInHf: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const hwpdocument_insertFootnote: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const hwpdocument_insertHyperlinkEx: (a: number, b: number, c: number) => [number, number, number];
@@ -344,6 +346,7 @@ export const hwpdocument_insertPageBreak: (a: number, b: number, c: number, d: n
 export const hwpdocument_insertParagraph: (a: number, b: number, c: number) => [number, number, number, number];
 export const hwpdocument_insertPicture: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number) => [number, number, number, number];
 export const hwpdocument_insertPictureEx: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const hwpdocument_insertPictureInCellParagraph: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number, number];
 export const hwpdocument_insertTableColumn: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const hwpdocument_insertTableRow: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const hwpdocument_insertText: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
@@ -463,7 +466,7 @@ export const hwpdocument_setControlFlipAt: (a: number, b: number, c: number, d: 
 export const hwpdocument_setControlLock: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const hwpdocument_setControlZOrderAt: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const hwpdocument_setDpi: (a: number, b: number) => void;
-export const hwpdocument_setEquationProperties: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const hwpdocument_setEquationProperties: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
 export const hwpdocument_setExactFontInstance: (a: number, b: number, c: number) => [number, number, number, number];
 export const hwpdocument_setFallbackFont: (a: number, b: number, c: number) => void;
 export const hwpdocument_setFieldValue: (a: number, b: number, c: number, d: number) => [number, number, number, number];
