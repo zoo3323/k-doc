@@ -1,0 +1,98 @@
+From cd5900bd95803707a0b06c4a919a338b8b14c37b Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 16:27:05 +0900
+Subject: [PATCH] =?UTF-8?q?fix(hancom):=20=EB=AC=B8=EC=9E=90=EC=97=B4?=
+ =?UTF-8?q?=EC=9D=84=20=ED=91=9C=EB=A1=9C=EA=B0=80=20=EC=B2=AB=20=EB=AC=B8?=
+ =?UTF-8?q?=EB=8B=A8=EC=9D=98=20=EA=B5=AC=EC=97=AD=20=ED=91=9C=EC=8B=9D?=
+ =?UTF-8?q?=EC=9D=84=20=EA=B0=9C=EC=B2=B4=EB=A1=9C=20=EB=B3=B4=EB=8D=98=20?=
+ =?UTF-8?q?=EA=B2=83,=20=ED=8E=B8=EC=A7=91=20=EC=9A=A9=EC=A7=80=20?=
+ =?UTF-8?q?=EC=A0=81=EC=9A=A9=20=EB=B2=94=EC=9C=84?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 첫 문단의 구역·단·머리말 표식은 그대로 두고 표로 바꾼다
+- 편집 용지: 현재 구역/문서 전체 고르기를 실제로 적용(새 구역으로는 뺌)
+---
+ rhwp-studio/src/ui/page-setup-dialog.ts       | 13 +++++++++++--
+ .../tests/mutation-routing-guard.test.ts      |  2 +-
+ .../commands/object_ops/table.rs              | 19 ++++++++++++++++++-
+ 3 files changed, 30 insertions(+), 4 deletions(-)
+
+diff --git a/rhwp-studio/src/ui/page-setup-dialog.ts b/rhwp-studio/src/ui/page-setup-dialog.ts
+index cd600169b..006cf3ae3 100644
+--- a/rhwp-studio/src/ui/page-setup-dialog.ts
++++ b/rhwp-studio/src/ui/page-setup-dialog.ts
+@@ -194,7 +194,8 @@ export class PageSetupDialog extends ModalDialog {
+     this.scopeSelect = document.createElement('select');
+     this.scopeSelect.className = 'dialog-select';
+     this.scopeSelect.style.width = '120px';
+-    for (const [val, text] of [['all', i18nText('dialog.pageSetup.createBody.label')], ['new-section', i18nText('dialog.pageSetup.createBody.label.x3c151b')]] as const) {
++    // 한글: 현재 구역 / 문서 전체. (새 구역으로는 구역 나누기가 엔진에 없어 뺐다.)
++    for (const [val, text] of [['section', '현재 구역'], ['all', i18nText('dialog.pageSetup.createBody.label')]] as const) {
+       const opt = document.createElement('option');
+       opt.value = val;
+       opt.textContent = text;
+@@ -241,7 +242,15 @@ export class PageSetupDialog extends ModalDialog {
+ 
+     // [편집 용지 이관] 쪽 정의 변경을 snapshot 으로 라우팅해 undo 가능(#2077 수식 속성 동형).
+     // services 미주입 환경(구 호출부)에서만 직접 적용 fallback.
+-    const apply = () => this.wasm.setPageDef(this.sectionIdx, newDef);
++    // 「문서 전체」면 모든 구역에, 아니면 현재 구역에만 적용한다.
++    const applyToAll = this.scopeSelect?.value === 'all';
++    const apply = () => {
++      if (!applyToAll) return this.wasm.setPageDef(this.sectionIdx, newDef);
++      let last: ReturnType<WasmBridge['setPageDef']> = { ok: true, pageCount: 0 };
++      const count = Math.max(1, this.wasm.getSectionCount());
++      for (let sec = 0; sec < count; sec += 1) last = this.wasm.setPageDef(sec, newDef);
++      return last;
++    };
+     return applyThroughRouter({
+       services: this.services,
+       label: 'PageSetupDialog',
+diff --git a/rhwp-studio/tests/mutation-routing-guard.test.ts b/rhwp-studio/tests/mutation-routing-guard.test.ts
+index 1fc1b3527..3193fc88f 100644
+--- a/rhwp-studio/tests/mutation-routing-guard.test.ts
++++ b/rhwp-studio/tests/mutation-routing-guard.test.ts
+@@ -256,7 +256,7 @@ const BASELINE: Readonly<Record<string, number>> = {
+   'src/ui/new-number-dialog.ts': 1,
+   'src/ui/numbering-dialog.ts': 1,
+   'src/ui/page-border-dialog.ts': 1,
+-  'src/ui/page-setup-dialog.ts': 1,
++  'src/ui/page-setup-dialog.ts': 2, // +1 K-Doc: 「문서 전체」는 구역마다 setPageDef (같은 applyThroughRouter 안)
+   'src/ui/picture-props-dialog.ts': 5,
+   'src/ui/section-settings-dialog.ts': 2,
+   'src/ui/style-dialog.ts': 2, // +1: [#3387] 삭제를 snapshot 으로 라우팅하며 services 미주입 fallback 분기 추가(원장은 표면 수만 세므로 라우팅해도 줄지 않는다)
+diff --git a/src/document_core/commands/object_ops/table.rs b/src/document_core/commands/object_ops/table.rs
+index dd710fc26..1717aa94c 100644
+--- a/src/document_core/commands/object_ops/table.rs
++++ b/src/document_core/commands/object_ops/table.rs
+@@ -416,7 +416,24 @@ impl DocumentCore {
+         if hi >= section.paragraphs.len() {
+             return Err(HwpError::RenderError(format!("문단 {} 범위 초과", hi)));
+         }
+-        if section.paragraphs[lo..=hi].iter().any(|p| !p.controls.is_empty()) {
++        // 첫 문단의 구역·단·머리말 같은 문단 표식은 그대로 둔다. 글 사이에 든 개체(그림·수식·
++        // 각주 등)나 뒤 문단의 표식은 지우면 사라지므로 바꾸지 않는다.
++        let is_marker = |c: &Control| {
++            matches!(
++                c,
++                Control::SectionDef(_)
++                    | Control::ColumnDef(_)
++                    | Control::PageHide(_)
++                    | Control::PageNumberPos(_)
++                    | Control::PageNumCtrl(_)
++                    | Control::Header(_)
++                    | Control::Footer(_)
++            )
++        };
++        let blocked = section.paragraphs[lo..=hi].iter().enumerate().any(|(i, p)| {
++            p.controls.iter().any(|c| i > 0 || !is_marker(c))
++        });
++        if blocked {
+             return Ok(r#"{"ok":false,"reason":"개체가 든 문단은 표로 바꿀 수 없습니다"}"#.to_string());
+         }
+         let rows: Vec<Vec<String>> = section.paragraphs[lo..=hi]
+-- 
+2.50.1 (Apple Git-155)
+
