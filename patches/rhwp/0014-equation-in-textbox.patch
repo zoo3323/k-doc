@@ -1,0 +1,146 @@
+From e03341fe04e013b2cc2f8963467d90b590ca9286 Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 12:01:01 +0900
+Subject: [PATCH] =?UTF-8?q?fix(equation):=20=EA=B8=80=EC=83=81=EC=9E=90=20?=
+ =?UTF-8?q?=EC=95=88=20=EC=88=98=EC=8B=9D=EB=8F=84=20=EC=85=80=20=EB=AC=B8?=
+ =?UTF-8?q?=EB=8B=A8=20=EC=95=88=20=EC=9D=B8=EB=8D=B1=EC=8A=A4=EB=A1=9C=20?=
+ =?UTF-8?q?=EC=9D=BD=EA=B3=A0=20=EA=B3=A0=EC=B9=9C=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+시험지 <보기> 글상자 안 수식은 쪽 개체 목록에 cellIdx 0 으로 오는데, 수식 속성 조회가 표만 받아
+"지정된 컨트롤이 표가 아닙니다"로 고칠 수 없었다. 깊이 1 경로 해석(표·글상자 공용)을 쓴다.
+---
+ .../commands/object_ops/equation.rs           | 92 ++++++++++---------
+ 1 file changed, 51 insertions(+), 41 deletions(-)
+
+diff --git a/src/document_core/commands/object_ops/equation.rs b/src/document_core/commands/object_ops/equation.rs
+index 1444809a1..9eb128b3d 100644
+--- a/src/document_core/commands/object_ops/equation.rs
++++ b/src/document_core/commands/object_ops/equation.rs
+@@ -157,25 +157,9 @@ impl DocumentCore {
+         })?;
+ 
+         let ctrl = if let (Some(ci), Some(cpi)) = (cell_idx, cell_para_idx) {
+-            // 표 셀 내 수식
+-            let para = section.paragraphs.get(parent_para_idx).ok_or_else(|| {
+-                HwpError::RenderError(format!("문단 인덱스 {} 범위 초과", parent_para_idx))
+-            })?;
+-            let table = match para.controls.get(control_idx) {
+-                Some(Control::Table(t)) => t,
+-                _ => {
+-                    return Err(HwpError::RenderError(
+-                        "지정된 컨트롤이 표가 아닙니다".to_string(),
+-                    ))
+-                }
+-            };
+-            let cell = table
+-                .cells
+-                .get(ci)
+-                .ok_or_else(|| HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", ci)))?;
+-            let cell_para = cell.paragraphs.get(cpi).ok_or_else(|| {
+-                HwpError::RenderError(format!("셀 문단 인덱스 {} 범위 초과", cpi))
+-            })?;
++            // 표 셀·글상자(cellIdx 0) 안 수식 — 깊이 1 경로로 문단을 찾는다.
++            let cell_para =
++                self.resolve_paragraph_by_path(section_idx, parent_para_idx, &[(control_idx, ci, cpi)])?;
+             // 셀 문단 안 몇 번째 컨트롤인지 알면 그것을, 모르면 첫 수식을 쓴다.
+             // 한 셀 문단에 수식이 여럿이면 첫 수식만 고쳐지던 문제를 막는다.
+             match inner_control_idx {
+@@ -220,25 +204,12 @@ impl DocumentCore {
+         })?;
+ 
+         let ctrl = if let (Some(ci), Some(cpi)) = (cell_idx, cell_para_idx) {
+-            // 표 셀 내 수식
+-            let para = section.paragraphs.get_mut(parent_para_idx).ok_or_else(|| {
+-                HwpError::RenderError(format!("문단 인덱스 {} 범위 초과", parent_para_idx))
+-            })?;
+-            let table = match para.controls.get_mut(control_idx) {
+-                Some(Control::Table(t)) => t,
+-                _ => {
+-                    return Err(HwpError::RenderError(
+-                        "지정된 컨트롤이 표가 아닙니다".to_string(),
+-                    ))
+-                }
+-            };
+-            let cell = table
+-                .cells
+-                .get_mut(ci)
+-                .ok_or_else(|| HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", ci)))?;
+-            let cell_para = cell.paragraphs.get_mut(cpi).ok_or_else(|| {
+-                HwpError::RenderError(format!("셀 문단 인덱스 {} 범위 초과", cpi))
+-            })?;
++            // 표 셀·글상자(cellIdx 0) 안 수식 — 깊이 1 경로로 문단을 찾는다.
++            let cell_para = Self::resolve_cell_paragraph_mut(
++                section,
++                parent_para_idx,
++                &[(control_idx, ci, cpi)],
++            )?;
+             match inner_control_idx {
+                 Some(inner) => cell_para.controls.get_mut(inner).ok_or_else(|| {
+                     HwpError::RenderError(format!("셀 내 컨트롤 {} 범위 초과", inner))
+@@ -453,11 +424,11 @@ impl DocumentCore {
+         // 색상·getter 봉지 같은 비기하 편집은 기존 저장 프레임을 유지한다.
+         if inline_flow_changed {
+             if let (Some(cell), Some(paragraph)) = (cell_idx, cell_para_idx) {
+-                self.reflow_cell_paragraph(
++                // 경로 버전은 깊이 1 표에서 flat 과 같고, 글상자면 조용히 건너뛴다.
++                self.reflow_cell_paragraph_by_path(
+                     section_idx,
+                     parent_para_idx,
+-                    control_idx,
+-                    cell,
++                    &[(control_idx, cell, paragraph)],
+                     paragraph,
+                 );
+             } else {
+@@ -811,6 +782,45 @@ mod tests {
+     use crate::document_core::DocumentCore;
+     use crate::model::control::Equation;
+ 
++    /// 시험지 `<보기>` 글상자 안 수식(쪽 개체 목록의 cellIdx 0)도 셀 문단 안 인덱스로 하나씩 읽는다.
++    /// 예전에는 표만 받아 "지정된 컨트롤이 표가 아닙니다"로 고칠 수 없었다.
++    #[test]
++    fn equations_in_textbox_are_addressed_one_by_one() {
++        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
++            .join("samples/3-09월_교육_통합_2022.hwp");
++        let Ok(bytes) = std::fs::read(&path) else {
++            eprintln!("표본 없음: {}", path.display());
++            return;
++        };
++        let core = DocumentCore::from_bytes(&bytes).expect("exam sample");
++        let layout: serde_json::Value =
++            serde_json::from_str(&core.get_page_control_layout_native(1).expect("layout"))
++                .expect("layout json");
++        let mut seen = std::collections::BTreeSet::new();
++        let mut scripts = Vec::new();
++        for c in layout["controls"].as_array().expect("controls") {
++            if c["type"] != "equation" || c["cellIdx"].is_null() {
++                continue;
++            }
++            let at = |k: &str| c[k].as_u64().map(|v| v as usize);
++            let inner = at("innerControlIdx");
++            assert!(inner.is_some(), "셀 문단 안 인덱스가 실려야 한다: {c}");
++            assert!(seen.insert((at("paraIdx"), at("controlIdx"), at("cellIdx"), at("cellParaIdx"), inner)));
++            let props = core
++                .get_equation_properties_at_native(
++                    at("secIdx").unwrap_or(0),
++                    at("paraIdx").unwrap(),
++                    at("controlIdx").unwrap(),
++                    at("cellIdx"),
++                    at("cellParaIdx"),
++                    inner,
++                )
++                .expect("글상자 안 수식 속성");
++            scripts.push(props);
++        }
++        assert!(scripts.len() >= 2, "표본 2쪽에 셀/글상자 수식이 있어야 한다");
++    }
++
+     /// 표 셀 안에 수식 둘을 넣으면 셀 문단에 들어가고, 각자 자기 인덱스로 읽고·고치고·지울 수 있다.
+     /// 예전에는 셀 안 수식이 셀 문단의 첫 수식으로만 짚혀 두 번째 수식을 고칠 수 없었다.
+     #[test]
+-- 
+2.50.1 (Apple Git-155)
+

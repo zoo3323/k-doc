@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RHWP="$ROOT/third_party/rhwp"
 BASE=ad4bf269ffef5adf2142b33004a9981fad7ce804
-MARKER="표 셀에 클릭으로 넣은 그림을 셀 문단 안 자리차지 그림으로 넣는다"
+MARKER="글상자 안 수식도 셀 문단 안 인덱스로 읽고 고친다"
 
 if [ ! -e "$RHWP/Cargo.toml" ]; then
   echo "[rhwp] upstream $BASE 받기"
