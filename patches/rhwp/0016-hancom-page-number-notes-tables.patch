@@ -1,0 +1,1054 @@
+From 1e28aa3eea18fa09dd0074adac4d2d3c49339e6c Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 16:00:08 +0900
+Subject: [PATCH] =?UTF-8?q?feat(hancom):=20=EC=AA=BD=20=EB=B2=88=ED=98=B8?=
+ =?UTF-8?q?=20=EB=A7=A4=EA=B8=B0=EA=B8=B0,=20=EA=B0=81=EC=A3=BC=20?=
+ =?UTF-8?q?=EB=AA=A8=EC=96=91,=20=EA=B8=80=EC=9E=90=20=EA=B2=B9=EC=B9=98?=
+ =?UTF-8?q?=EA=B8=B0,=20=EA=B0=81=EC=A3=BC/=EB=AF=B8=EC=A3=BC=20=EB=B3=80?=
+ =?UTF-8?q?=ED=99=98,=20=EB=AC=B8=EC=9E=90=EC=97=B4=E2=86=94=ED=91=9C?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- setPageNumberPos/getPageNumberPos: 위치 10곳·번호 모양·줄표(Ctrl+M,P)
+- getFootnoteShape/applyFootnoteShape: 각주/미주 모양 창에 각주 탭, 각주 시작 번호를 따라 다시 매김
+- insertCharOverlap: 겹칠 글자·원/사각형(반전)·안쪽 크기
+- convertNotes: 문서의 각주↔미주를 모두 바꿈(표·글상자 안 포함)
+- textToTable/tableToText: 탭·쉼표·빈칸으로 문단↔표
+---
+ rhwp-studio/src/command/commands/insert.ts    |   3 +-
+ .../src/core/mutation-method-registry.ts      |   2 +-
+ rhwp-studio/src/core/wasm-bridge.ts           |  45 +++++
+ .../src/engine/input-handler-keyboard.ts      |   2 +
+ rhwp-studio/src/ui/endnote-shape-dialog.ts    |  60 ++++---
+ .../tests/mutation-routing-guard.test.ts      |   4 +-
+ src/document_core/commands/footnote_ops.rs    | 105 ++++++++++-
+ src/document_core/commands/formatting.rs      | 119 +++++++++++++
+ .../commands/object_ops/shape.rs              |  83 +++++++--
+ .../commands/object_ops/table.rs              | 163 ++++++++++++++++++
+ src/document_core/queries/bookmark_query.rs   |  91 ++++++++++
+ src/wasm_api.rs                               |  93 ++++++++++
+ 12 files changed, 732 insertions(+), 38 deletions(-)
+
+diff --git a/rhwp-studio/src/command/commands/insert.ts b/rhwp-studio/src/command/commands/insert.ts
+index cfb4b2238..81b4c0631 100644
+--- a/rhwp-studio/src/command/commands/insert.ts
++++ b/rhwp-studio/src/command/commands/insert.ts
+@@ -386,7 +386,8 @@ export const insertCommands: CommandDef[] = [
+     execute(services) {
+       const pos = services.getInputHandler()?.getPosition();
+       const sectionIdx = pos?.sectionIndex ?? 0;
+-      endnoteShapeDialog = new EndnoteShapeDialog(services.wasm, services.eventBus, sectionIdx, services);
++      // 한글처럼 각주 탭이 먼저다(미주 탭은 창 위 탭으로 바꾼다).
++      endnoteShapeDialog = new EndnoteShapeDialog(services.wasm, services.eventBus, sectionIdx, services, 'footnote');
+       endnoteShapeDialog.show();
+     },
+   },
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 4d7b6ba6c..375351310 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -35,7 +35,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'insertTableColumn', 'deleteTableRow', 'deleteTableColumn', 'mergeTableCells',
+   'splitTableCell', 'splitTableCellInto', 'splitTableCellsInRange', 'resizeTableCells',
+   'equalizeTableCells', // 한글 셀 너비/높이를 같게
+-  'insertPageNumberField', 'insertParagraphBand',
++  'insertPageNumberField', 'insertParagraphBand', 'setPageNumberPos', 'applyFootnoteShape', 'insertCharOverlap', 'convertNotes', 'textToTable', 'tableToText',
+   'resizeTableCellsByPath', // [#7189] 중첩 표 셀 크기 조절 — 평면 resizeTableCells 의 경로 변형
+   'moveTableOffset', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
+   'applyCellBorderFillIds', 'removeBorderFillTails',
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index b65527832..f1b686702 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -2665,6 +2665,41 @@ export class WasmBridge {
+     );
+   }
+ 
++  /** 한글 「쪽 번호 매기기」 — position 0~10, format 은 번호 모양, dash 면 줄표. */
++  setPageNumberPos(sec: number, para: number, format: number, position: number, dash: boolean): { ok: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).setPageNumberPos(sec, para, format, position, dash));
++  }
++
++  getPageNumberPos(sec: number, para: number): { ok: boolean; exists: boolean; here?: boolean; format?: number; position?: number; dash?: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).getPageNumberPos(sec, para));
++  }
++
++  /** 한글 「글자 겹치기」 — borderType 0 글자끼리·1 원·2 반전 원·3 사각형·4 반전 사각형, innerSize 10% 단계. */
++  insertCharOverlap(sec: number, para: number, charOffset: number, text: string, borderType: number, innerSize: number): { ok: boolean; error?: string } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).insertCharOverlap(sec, para, charOffset, text, borderType, innerSize));
++  }
++
++  /** 한글 「각주/미주 변환」 — toEndnote 면 각주를 모두 미주로, 아니면 미주를 모두 각주로. */
++  convertNotes(toEndnote: boolean): { ok: boolean; converted: number } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).convertNotes(toEndnote));
++  }
++
++  /** 한글 「문자열을 표로」 — 본문 문단 범위를 표로. */
++  textToTable(sec: number, startPara: number, endPara: number, separator: string): { ok: boolean; paraIdx?: number; controlIdx?: number; reason?: string } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).textToTable(sec, startPara, endPara, separator));
++  }
++
++  /** 한글 「표를 문자열로」 — 본문 표를 줄마다 한 문단으로. */
++  tableToText(sec: number, parentPara: number, controlIdx: number, separator: string): { ok: boolean; paraIdx?: number; charOffset?: number; reason?: string } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).tableToText(sec, parentPara, controlIdx, separator));
++  }
++
+   /** 한글 「문단 띠」 — 캐럿 문단에 본문 폭 검정 띠(1mm)를 넣는다. */
+   insertParagraphBand(sec: number, para: number, charOffset: number): { ok: boolean; paraIdx: number; controlIdx: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+@@ -2778,6 +2813,16 @@ export class WasmBridge {
+     return JSON.parse((this.doc as any).insertEndnote(sec, para, charOffset));
+   }
+ 
++  getFootnoteShape(sec: number): EndnoteShapeSettings {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).getFootnoteShape(sec));
++  }
++
++  applyFootnoteShape(sec: number, settings: EndnoteShapeSettings): { ok: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).applyFootnoteShape(sec, JSON.stringify(settings)));
++  }
++
+   getEndnoteShape(sec: number): EndnoteShapeSettings {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse((this.doc as any).getEndnoteShape(sec));
+diff --git a/rhwp-studio/src/engine/input-handler-keyboard.ts b/rhwp-studio/src/engine/input-handler-keyboard.ts
+index 2037fd11c..2b8c61c35 100755
+--- a/rhwp-studio/src/engine/input-handler-keyboard.ts
++++ b/rhwp-studio/src/engine/input-handler-keyboard.ts
+@@ -544,6 +544,8 @@ const chordMapM: Record<string, string> = {
+   ㄹ: 'table:formula', // 한글 IME
+   m: 'insert:equation',
+   ㅡ: 'insert:equation', // 한글 IME
++  p: 'page:page-number-pos', // 한컴 Ctrl+N,P 쪽 번호 매기기
++  ㅔ: 'page:page-number-pos', // 한글 IME
+   l: 'insert:para-band', // 한컴 Ctrl+N,L 문단 띠
+   ㅣ: 'insert:para-band', // 한글 IME
+ };
+diff --git a/rhwp-studio/src/ui/endnote-shape-dialog.ts b/rhwp-studio/src/ui/endnote-shape-dialog.ts
+index ddabb1922..17fed9523 100644
+--- a/rhwp-studio/src/ui/endnote-shape-dialog.ts
++++ b/rhwp-studio/src/ui/endnote-shape-dialog.ts
+@@ -145,12 +145,16 @@ export class EndnoteShapeDialog extends ModalDialog {
+     private eventBus: EventBus,
+     private sectionIdx: number,
+     private services?: CommandServices,
++    /** 한글 「각주/미주 모양」: 각주 탭과 미주 탭. 각주에는 미주 전용(번호 매기기·놓을 곳) 묶음이 없다. */
++    private kind: 'endnote' | 'footnote' = 'endnote',
+   ) {
+-    super(t('dialog.endnoteShape.mmToHwp.title'), 620);
++    super(kind === 'footnote' ? '각주 모양' : t('dialog.endnoteShape.mmToHwp.title'), 620);
+   }
+ 
+   show(): void {
+-    this.settings = this.wasm.getEndnoteShape(this.sectionIdx);
++    this.settings = this.kind === 'footnote'
++      ? this.wasm.getFootnoteShape(this.sectionIdx)
++      : this.wasm.getEndnoteShape(this.sectionIdx);
+     super.show();
+     this.attachPopupDismissHandlers();
+     this.populate();
+@@ -168,20 +172,24 @@ export class EndnoteShapeDialog extends ModalDialog {
+ 
+     const tabs = document.createElement('div');
+     tabs.className = 'dialog-tabs';
+-    const tab = document.createElement('button');
+-    tab.type = 'button';
+-    tab.className = 'dialog-tab active';
+-    tab.textContent = t('dialog.endnoteShape.tab.text');
+-    tabs.appendChild(tab);
+-
+-    body.append(
+-      tabs,
+-      this.numberGroup(),
+-      this.spacingGroup(),
+-      this.numberingGroup(),
+-      this.contentNumberGroup(),
+-      this.placementGroup(),
+-    );
++    for (const kind of ['footnote', 'endnote'] as const) {
++      const tab = document.createElement('button');
++      tab.type = 'button';
++      tab.className = kind === this.kind ? 'dialog-tab active' : 'dialog-tab';
++      tab.textContent = kind === 'footnote' ? '각주 모양' : t('dialog.endnoteShape.tab.text');
++      if (kind !== this.kind) {
++        tab.addEventListener('click', () => {
++          this.hide();
++          new EndnoteShapeDialog(this.wasm, this.eventBus, this.sectionIdx, this.services, kind).show();
++        });
++      }
++      tabs.appendChild(tab);
++    }
++
++    body.append(tabs, this.numberGroup(), this.spacingGroup());
++    if (this.kind === 'endnote') {
++      body.append(this.numberingGroup(), this.contentNumberGroup(), this.placementGroup());
++    }
+     return body;
+   }
+ 
+@@ -199,8 +207,12 @@ export class EndnoteShapeDialog extends ModalDialog {
+       separatorMarginTop: mmToHwp(parseFloat(this.marginTopInput.value) || 0),
+       noteSpacing: mmToHwp(parseFloat(this.noteSpacingInput.value) || 0),
+       separatorMarginBottom: mmToHwp(parseFloat(this.marginBottomInput.value) || 0),
+-      numbering: this.numberingRestart.checked ? 'restartSection' : 'continue',
+-      placement: this.placementSection.checked ? 'sectionEnd' : 'documentEnd',
++      numbering: this.kind === 'footnote'
++        ? this.settings.numbering
++        : this.numberingRestart.checked ? 'restartSection' : 'continue',
++      placement: this.kind === 'footnote'
++        ? this.settings.placement
++        : this.placementSection.checked ? 'sectionEnd' : 'documentEnd',
+     };
+ 
+     // [Task #2370] 값이 하나도 안 바뀐 [확인]은 문서를 바꾸지 않는다. `next` 는
+@@ -218,11 +230,13 @@ export class EndnoteShapeDialog extends ModalDialog {
+       .every((k) => next[k] === this.settings[k]);
+ 
+     // [미주 모양 이관] snapshot 으로 라우팅(#2077 동형). services 미주입 시 직접 적용 fallback.
+-    const apply = () => this.wasm.applyEndnoteShape(this.sectionIdx, next);
++    const apply = () => (this.kind === 'footnote'
++      ? this.wasm.applyFootnoteShape(this.sectionIdx, next)
++      : this.wasm.applyEndnoteShape(this.sectionIdx, next));
+     return applyThroughRouter({
+       services: this.services,
+       label: 'EndnoteShapeDialog',
+-      operationType: 'endnoteShape',
++      operationType: 'endnoteShape', // 각주·미주 모양 같은 창
+       // 무변경이면 뮤테이션도 기록도 생략(null) — phantom 엔트리·스냅샷 2슬롯 방지.
+       operation: (ih) => {
+         if (unchanged) return null;
+@@ -248,8 +262,10 @@ export class EndnoteShapeDialog extends ModalDialog {
+     this.marginTopInput.value = String(hwpToMm(this.settings.separatorMarginTop || 0));
+     this.noteSpacingInput.value = String(hwpToMm(this.settings.noteSpacing || 0));
+     this.marginBottomInput.value = String(hwpToMm(this.settings.separatorMarginBottom || 0));
+-    this.setNumberingRadio(normalizeEndnoteNumbering(this.settings.numbering));
+-    this.setPlacementRadio(normalizeEndnotePlacement(this.settings.placement));
++    if (this.kind === 'endnote') {
++      this.setNumberingRadio(normalizeEndnoteNumbering(this.settings.numbering));
++      this.setPlacementRadio(normalizeEndnotePlacement(this.settings.placement));
++    }
+     this.updateSeparatorEnabled();
+   }
+ 
+diff --git a/rhwp-studio/tests/mutation-routing-guard.test.ts b/rhwp-studio/tests/mutation-routing-guard.test.ts
+index df476d8dd..1fc1b3527 100644
+--- a/rhwp-studio/tests/mutation-routing-guard.test.ts
++++ b/rhwp-studio/tests/mutation-routing-guard.test.ts
+@@ -56,7 +56,7 @@ function bridgePublicMethods(): string[] {
+ // 문서 변경을 시사하는 동사 접두어. MUTATING_METHODS 의 모든 이름을 커버해야
+ // 하며(아래 자기정합 단언이 강제), 그래야 새 브리지 뮤테이터가 drift 에 걸린다.
+ // find* 는 쿼리(findNextEditableControl 등)가 많아 findOrCreate 로 좁힌다.
+-const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|equalize|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|renameBookmark)/;
++const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|equalize|convert|textToTable|tableToText|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|renameBookmark)/;
+ 
+ test('MUTATING_VERB 는 MUTATING_METHODS 전 항목을 커버한다(drift 사각 방지)', () => {
+   // 목록에 있으나 동사 패턴에 안 걸리는 이름이 있으면, 그 계열의 신규 브리지
+@@ -248,7 +248,7 @@ const BASELINE: Readonly<Record<string, number>> = {
+   'src/ui/cell-border-bg-dialog.ts': 5,
+   'src/ui/chart-data-dialog.ts': 3, // [#4694] dryRun 선검증 1 + snapshot 라우팅 실쓰기 1 + services 미주입 폴백 1
+   'src/ui/column-settings-dialog.ts': 1,
+-  'src/ui/endnote-shape-dialog.ts': 1,
++  'src/ui/endnote-shape-dialog.ts': 2, // +1 K-Doc: 각주 탭은 applyFootnoteShape (같은 applyThroughRouter 안, 미주와 배타)
+   'src/ui/equation-editor-dialog.ts': 2,
+   'src/ui/equation-props-dialog.ts': 2,
+   'src/ui/find-dialog.ts': 4,
+diff --git a/src/document_core/commands/footnote_ops.rs b/src/document_core/commands/footnote_ops.rs
+index 57337fb17..e589ee597 100644
+--- a/src/document_core/commands/footnote_ops.rs
++++ b/src/document_core/commands/footnote_ops.rs
+@@ -13,11 +13,83 @@ use crate::model::paragraph::{ParaMeta, Paragraph};
+ use crate::renderer::composer::{reflow_line_segs, restamp_indentation, ParagraphBox};
+ 
+ impl DocumentCore {
++    /// 한글 「입력 → 주석 → 각주/미주 변환」: 문서의 각주를 모두 미주로(`to_endnote`), 또는
++    /// 미주를 모두 각주로 바꾼다. 내용·장식은 그대로 옮기고 번호는 구역마다 다시 매긴다.
++    /// 반환 `{"ok":true,"converted":N}`.
++    pub fn convert_notes_native(&mut self, to_endnote: bool) -> Result<String, crate::error::HwpError> {
++        fn walk(paragraphs: &mut [Paragraph], to_endnote: bool, count: &mut usize) {
++            for para in paragraphs.iter_mut() {
++                for ctrl in para.controls.iter_mut() {
++                    match ctrl {
++                        Control::Footnote(f) if to_endnote => {
++                            let f = std::mem::take(&mut **f);
++                            *ctrl = Control::Endnote(Box::new(crate::model::footnote::Endnote {
++                                number: f.number,
++                                paragraphs: f.paragraphs,
++                                before_decoration_letter: f.before_decoration_letter,
++                                after_decoration_letter: f.after_decoration_letter,
++                                number_shape: f.number_shape,
++                                instance_id: f.instance_id,
++                                list_header_property: f.list_header_property,
++                                decoration_is_user_char: f.decoration_is_user_char,
++                            }));
++                            *count += 1;
++                        }
++                        Control::Endnote(e) if !to_endnote => {
++                            let e = std::mem::take(&mut **e);
++                            *ctrl = Control::Footnote(Box::new(crate::model::footnote::Footnote {
++                                number: e.number,
++                                paragraphs: e.paragraphs,
++                                before_decoration_letter: e.before_decoration_letter,
++                                after_decoration_letter: e.after_decoration_letter,
++                                number_shape: e.number_shape,
++                                instance_id: e.instance_id,
++                                list_header_property: e.list_header_property,
++                                decoration_is_user_char: e.decoration_is_user_char,
++                            }));
++                            *count += 1;
++                        }
++                        Control::Table(table) => {
++                            for cell in table.cells.iter_mut() {
++                                walk(&mut cell.paragraphs, to_endnote, count);
++                            }
++                        }
++                        Control::Shape(shape) => {
++                            if let Some(tb) = shape.drawing_mut().and_then(|d| d.text_box.as_mut()) {
++                                walk(&mut tb.paragraphs, to_endnote, count);
++                            }
++                        }
++                        _ => {}
++                    }
++                }
++            }
++        }
++
++        let mut total = 0usize;
++        for section_idx in 0..self.document.sections.len() {
++            let mut count = 0usize;
++            walk(&mut self.document.sections[section_idx].paragraphs, to_endnote, &mut count);
++            if count > 0 {
++                self.document.sections[section_idx].raw_stream = None;
++                self.renumber_footnotes_in_section(section_idx);
++                self.mark_section_dirty(section_idx);
++                self.recompose_section(section_idx);
++                total += count;
++            }
++        }
++        if total > 0 {
++            self.paginate_if_needed();
++            self.invalidate_page_tree_cache();
++        }
++        Ok(format!("{{\"ok\":true,\"converted\":{}}}", total))
++    }
++
+     /// 구역의 각주와 미주 번호를 문서 순서대로 다시 매긴다. 한컴처럼 두 종류는 번호를 따로
+     /// 매기고, 미주는 미주 넣기·미주 모양 적용과 같이 구역의 미주 시작 번호에서 시작한다.
+-    fn renumber_footnotes_in_section(&mut self, section_idx: usize) {
++    pub(crate) fn renumber_footnotes_in_section(&mut self, section_idx: usize) {
+         let section = &mut self.document.sections[section_idx];
+-        let mut footnote_number = 1u16;
++        // 각주 시작 번호는 구역의 각주 모양을 따른다(한글 「각주/미주 모양」).
++        let mut footnote_number = section.section_def.footnote_shape.start_number.max(1);
+         let mut endnote_number = section.section_def.endnote_shape.start_number.max(1);
+         for para in &mut section.paragraphs {
+             for ctrl in &mut para.controls {
+@@ -892,3 +964,32 @@ mod delete_footnote_char_shape_tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod convert_notes_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    #[test]
++    fn footnotes_become_endnotes_and_back_with_their_text() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.insert_text_native(0, 0, 0, "본문").expect("text");
++        core.insert_footnote_native(0, 0, 2).expect("footnote");
++        let count = |core: &DocumentCore| {
++            let p = &core.document.sections[0].paragraphs[0];
++            (
++                p.controls.iter().filter(|c| matches!(c, Control::Footnote(_))).count(),
++                p.controls.iter().filter(|c| matches!(c, Control::Endnote(_))).count(),
++            )
++        };
++        assert_eq!(count(&core), (1, 0));
++        let r = core.convert_notes_native(true).unwrap();
++        assert!(r.contains("\"converted\":1"), "{r}");
++        assert_eq!(count(&core), (0, 1));
++        core.convert_notes_native(false).unwrap();
++        assert_eq!(count(&core), (1, 0));
++        let saved = core.export_hwp_native().expect("save");
++        DocumentCore::from_bytes(&saved).expect("reopen");
++    }
++}
+diff --git a/src/document_core/commands/formatting.rs b/src/document_core/commands/formatting.rs
+index dee9b8b09..355bb9912 100644
+--- a/src/document_core/commands/formatting.rs
++++ b/src/document_core/commands/formatting.rs
+@@ -2483,6 +2483,81 @@ impl DocumentCore {
+         Ok(crate::document_core::helpers::json_ok())
+     }
+ 
++    /// 한글 「쪽 → 쪽 번호 매기기」: 캐럿 문단에 쪽 번호 위치(pgnp)를 놓거나 고친다.
++    ///
++    /// `position` 0 없음, 1 왼쪽 위, 2 가운데 위, 3 오른쪽 위, 4 왼쪽 아래, 5 가운데 아래,
++    /// 6 오른쪽 아래, 7 바깥쪽 위, 8 바깥쪽 아래, 9 안쪽 위, 10 안쪽 아래(표 150).
++    /// `format` 은 번호 모양(표 134). `dash` 면 줄표를 넣어 `- 1 -` 꼴로 그린다.
++    pub fn set_page_number_pos_native(
++        &mut self,
++        section_idx: usize,
++        para_idx: usize,
++        format: u8,
++        position: u8,
++        dash: bool,
++    ) -> Result<String, crate::error::HwpError> {
++        use crate::model::control::{Control, PageNumberPos};
++
++        if position > 10 {
++            return Err(crate::error::HwpError::RenderError(format!("쪽 번호 위치 {} 는 0~10 이어야 한다", position)));
++        }
++        let para = self
++            .document
++            .sections
++            .get_mut(section_idx)
++            .and_then(|s| s.paragraphs.get_mut(para_idx))
++            .ok_or_else(|| crate::error::HwpError::RenderError("문단 범위 초과".to_string()))?;
++        let pnp = PageNumberPos {
++            format,
++            position,
++            user_symbol: '\0',
++            prefix_char: '\0',
++            suffix_char: '\0',
++            dash_char: if dash { '-' } else { '\0' },
++        };
++        match para.controls.iter().position(|c| matches!(c, Control::PageNumberPos(_))) {
++            Some(idx) => para.controls[idx] = Control::PageNumberPos(pnp),
++            None => {
++                // 감추기와 같이 문단 맨 앞 조판 부호로 둔다.
++                para.controls.insert(0, Control::PageNumberPos(pnp));
++                para.ctrl_data_records.insert(0, None);
++            }
++        }
++        self.document.sections[section_idx].raw_stream = None;
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++        Ok(crate::document_core::helpers::json_ok())
++    }
++
++    /// 캐럿 문단, 없으면 그 앞쪽에서 가장 가까운 쪽 번호 위치를 돌려준다(대화상자 처음 값).
++    pub fn get_page_number_pos_native(
++        &self,
++        section_idx: usize,
++        para_idx: usize,
++    ) -> Result<String, crate::error::HwpError> {
++        use crate::model::control::Control;
++        let section = self
++            .document
++            .sections
++            .get(section_idx)
++            .ok_or_else(|| crate::error::HwpError::RenderError("구역 범위 초과".to_string()))?;
++        let upto = para_idx.min(section.paragraphs.len().saturating_sub(1));
++        for (pi, para) in section.paragraphs[..=upto].iter().enumerate().rev() {
++            if let Some(Control::PageNumberPos(p)) =
++                para.controls.iter().find(|c| matches!(c, Control::PageNumberPos(_)))
++            {
++                return Ok(format!(
++                    "{{\"ok\":true,\"exists\":true,\"here\":{},\"format\":{},\"position\":{},\"dash\":{}}}",
++                    pi == upto,
++                    p.format,
++                    p.position,
++                    p.dash_char != '\0'
++                ));
++            }
++        }
++        Ok("{\"ok\":true,\"exists\":false}".to_string())
++    }
++
+     /// 현재 문단의 PageHide 상태를 조회한다.
+     pub fn get_page_hide_native(
+         &self,
+@@ -3175,3 +3250,47 @@ mod cell_reflow_width_tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod page_number_pos_tests {
++    use crate::document_core::DocumentCore;
++
++    #[test]
++    fn page_number_pos_is_placed_and_drawn_at_bottom_center_with_dashes() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.insert_text_native(0, 0, 0, "본문").expect("text");
++        core.set_page_number_pos_native(0, 0, 0, 5, true).expect("set");
++        let got: serde_json::Value =
++            serde_json::from_str(&core.get_page_number_pos_native(0, 0).unwrap()).unwrap();
++        assert_eq!(got["position"], 5, "{got}");
++        assert_eq!(got["dash"], true, "{got}");
++        fn texts(node: &crate::renderer::render_tree::RenderNode, out: &mut String) {
++            if let crate::renderer::render_tree::RenderNodeType::TextRun(run) = &node.node_type {
++                out.push_str(&run.text);
++                out.push('|');
++            }
++            for child in &node.children {
++                texts(child, out);
++            }
++        }
++        let tree = core.build_page_render_tree(0).expect("tree");
++        let mut all = String::new();
++        texts(&tree.root, &mut all);
++        assert!(all.contains("- 1 -"), "쪽 번호가 줄표와 함께 그려진다: {all}");
++
++        // 다시 매기면 고친다(둘이 되지 않는다).
++        core.set_page_number_pos_native(0, 0, 0, 3, false).expect("reset");
++        let count = core.document.sections[0].paragraphs[0]
++            .controls
++            .iter()
++            .filter(|c| matches!(c, crate::model::control::Control::PageNumberPos(_)))
++            .count();
++        assert_eq!(count, 1);
++        let saved = core.export_hwp_native().expect("save");
++        let reopened = DocumentCore::from_bytes(&saved).expect("reopen");
++        let got: serde_json::Value =
++            serde_json::from_str(&reopened.get_page_number_pos_native(0, 0).unwrap()).unwrap();
++        assert_eq!(got["position"], 3, "저장 뒤에도 남는다: {got}");
++    }
++}
+diff --git a/src/document_core/commands/object_ops/shape.rs b/src/document_core/commands/object_ops/shape.rs
+index a2518dc35..e0ce685d7 100644
+--- a/src/document_core/commands/object_ops/shape.rs
++++ b/src/document_core/commands/object_ops/shape.rs
+@@ -2590,10 +2590,23 @@ impl DocumentCore {
+ 
+     /// 현재 구역의 미주 모양을 조회한다.
+     pub fn get_endnote_shape_native(&self, section_idx: usize) -> Result<String, HwpError> {
++        self.get_note_shape_native(section_idx, true)
++    }
++
++    /// 현재 구역의 각주 모양을 조회한다(한글 「각주/미주 모양」의 각주 쪽).
++    pub fn get_footnote_shape_native(&self, section_idx: usize) -> Result<String, HwpError> {
++        self.get_note_shape_native(section_idx, false)
++    }
++
++    fn get_note_shape_native(&self, section_idx: usize, endnote: bool) -> Result<String, HwpError> {
+         let section = self.document.sections.get(section_idx).ok_or_else(|| {
+             HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
+         })?;
+-        let shape = &section.section_def.endnote_shape;
++        let shape = if endnote {
++            &section.section_def.endnote_shape
++        } else {
++            &section.section_def.footnote_shape
++        };
+         let separator_enabled = shape.separator_length != 0
+             || shape.separator_line_type != 0
+             || shape.separator_line_width != 0;
+@@ -2654,12 +2667,34 @@ impl DocumentCore {
+         &mut self,
+         section_idx: usize,
+         props_json: &str,
++    ) -> Result<String, HwpError> {
++        self.apply_note_shape_native(section_idx, props_json, true)
++    }
++
++    /// 현재 구역의 각주 모양을 적용한다. 각주 번호는 시작 번호부터 다시 매긴다.
++    pub fn apply_footnote_shape_native(
++        &mut self,
++        section_idx: usize,
++        props_json: &str,
++    ) -> Result<String, HwpError> {
++        self.apply_note_shape_native(section_idx, props_json, false)
++    }
++
++    fn apply_note_shape_native(
++        &mut self,
++        section_idx: usize,
++        props_json: &str,
++        endnote: bool,
+     ) -> Result<String, HwpError> {
+         {
+             let section = self.document.sections.get_mut(section_idx).ok_or_else(|| {
+                 HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
+             })?;
+-            let shape = &mut section.section_def.endnote_shape;
++            let shape = if endnote {
++                &mut section.section_def.endnote_shape
++            } else {
++                &mut section.section_def.footnote_shape
++            };
+ 
+             if let Some(v) = crate::document_core::helpers::json_str(props_json, "numberFormat") {
+                 shape.number_format =
+@@ -2733,16 +2768,21 @@ impl DocumentCore {
+             let number_format_code = Self::footnote_shape_number_format_code(shape.number_format);
+             let prefix_char = shape.prefix_char;
+             let suffix_char = shape.suffix_char;
+-            let mut next_number = start_number;
+-            Self::renumber_paragraph_endnotes_with_shape(
+-                &mut section.paragraphs,
+-                &mut next_number,
+-                number_format_code,
+-                prefix_char,
+-                suffix_char,
+-            );
++            if endnote {
++                let mut next_number = start_number;
++                Self::renumber_paragraph_endnotes_with_shape(
++                    &mut section.paragraphs,
++                    &mut next_number,
++                    number_format_code,
++                    prefix_char,
++                    suffix_char,
++                );
++            }
+             section.raw_stream = None;
+         }
++        if !endnote {
++            self.renumber_footnotes_in_section(section_idx);
++        }
+         self.sync_section_def_controls_from_section(section_idx);
+ 
+         self.recompose_section(section_idx);
+@@ -3189,3 +3229,26 @@ mod paragraph_band_tests {
+         ));
+     }
+ }
++
++#[cfg(test)]
++mod footnote_shape_tests {
++    use crate::document_core::DocumentCore;
++
++    #[test]
++    fn footnote_shape_is_read_and_applied_separately_from_endnotes() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.apply_footnote_shape_native(0, r#"{"numberFormat":"circledDigit","startNumber":3}"#)
++            .expect("apply footnote shape");
++        let foot: serde_json::Value =
++            serde_json::from_str(&core.get_footnote_shape_native(0).unwrap()).unwrap();
++        let end: serde_json::Value =
++            serde_json::from_str(&core.get_endnote_shape_native(0).unwrap()).unwrap();
++        assert_eq!(foot["startNumber"], 3, "{foot}");
++        assert_ne!(end["startNumber"], 3, "미주 모양은 그대로: {end}");
++        assert_eq!(
++            core.document.sections[0].section_def.footnote_shape.start_number,
++            3
++        );
++    }
++}
+diff --git a/src/document_core/commands/object_ops/table.rs b/src/document_core/commands/object_ops/table.rs
+index 64d0cc29b..cc1915307 100644
+--- a/src/document_core/commands/object_ops/table.rs
++++ b/src/document_core/commands/object_ops/table.rs
+@@ -391,6 +391,129 @@ impl DocumentCore {
+             }
+         }
+ 
++    /// 한글 「표 → 문자열을 표로」: 문단 `start_para..=end_para` 를 표 하나로 바꾼다.
++    /// 문단 하나가 한 줄, `separator` 로 나눈 조각이 한 칸이다. 반환에 표 자리와 줄·칸 수.
++    pub fn text_to_table_native(
++        &mut self,
++        section_idx: usize,
++        start_para: usize,
++        end_para: usize,
++        separator: &str,
++    ) -> Result<String, HwpError> {
++        let sep: char = match separator {
++            "tab" => '\t',
++            "comma" => ',',
++            "space" => ' ',
++            other => other.chars().next().unwrap_or('\t'),
++        };
++        let section = self.document.sections.get(section_idx).ok_or_else(|| {
++            HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
++        })?;
++        let (lo, hi) = (start_para.min(end_para), start_para.max(end_para));
++        if hi >= section.paragraphs.len() {
++            return Err(HwpError::RenderError(format!("문단 {} 범위 초과", hi)));
++        }
++        if section.paragraphs[lo..=hi].iter().any(|p| !p.controls.is_empty()) {
++            return Ok(r#"{"ok":false,"reason":"개체가 든 문단은 표로 바꿀 수 없습니다"}"#.to_string());
++        }
++        let rows: Vec<Vec<String>> = section.paragraphs[lo..=hi]
++            .iter()
++            .map(|p| p.text.split(sep).map(|s| s.to_string()).collect())
++            .collect();
++        let row_count = rows.len().min(u16::MAX as usize) as u16;
++        let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(1).clamp(1, 256) as u16;
++
++        // 뒤 문단부터 지우고 첫 문단을 비운 뒤 그 자리에 표를 만든다.
++        for para in (lo + 1..=hi).rev() {
++            self.delete_paragraph_native(section_idx, para)?;
++        }
++        let len = self.document.sections[section_idx].paragraphs[lo].text.chars().count();
++        if len > 0 {
++            self.delete_text_native(section_idx, lo, 0, len)?;
++        }
++        let created = self.create_table_native(section_idx, lo, 0, row_count, col_count)?;
++        let pick = |key: &str| -> Option<usize> {
++            created.split(&format!("\"{}\":", key)).nth(1)?.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
++        };
++        let (Some(pi), Some(ci)) = (pick("paraIdx"), pick("controlIdx")) else {
++            return Ok(created);
++        };
++        for (r, row) in rows.iter().enumerate() {
++            for (c, text) in row.iter().enumerate() {
++                if text.is_empty() {
++                    continue;
++                }
++                let cell_idx = r * col_count as usize + c;
++                self.insert_text_in_cell_native(section_idx, pi, ci, cell_idx, 0, 0, text)?;
++            }
++        }
++        Ok(format!(
++            "{{\"ok\":true,\"paraIdx\":{},\"controlIdx\":{},\"rows\":{},\"cols\":{}}}",
++            pi, ci, row_count, col_count
++        ))
++    }
++
++    /// 한글 「표 → 표를 문자열로」: 표를 줄마다 한 문단, 칸 사이는 `separator` 로 이은 글로 바꾼다.
++    /// 셀 안 여러 문단은 빈칸으로 잇는다. 합친 셀은 그 셀이 시작하는 줄·칸에만 쓴다.
++    pub fn table_to_text_native(
++        &mut self,
++        section_idx: usize,
++        parent_para: usize,
++        control_idx: usize,
++        separator: &str,
++    ) -> Result<String, HwpError> {
++        let sep = match separator {
++            "tab" => "\t".to_string(),
++            "comma" => ",".to_string(),
++            "space" => " ".to_string(),
++            other => other.chars().next().map(|c| c.to_string()).unwrap_or_else(|| "\t".to_string()),
++        };
++        let (lines, at) = {
++            let para = self
++                .document
++                .sections
++                .get(section_idx)
++                .and_then(|s| s.paragraphs.get(parent_para))
++                .ok_or_else(|| HwpError::RenderError("문단 범위 초과".into()))?;
++            let Some(crate::model::control::Control::Table(table)) = para.controls.get(control_idx) else {
++                return Ok(r#"{"ok":false,"reason":"표가 아닙니다"}"#.to_string());
++            };
++            let mut grid = vec![vec![String::new(); table.col_count as usize]; table.row_count as usize];
++            for cell in &table.cells {
++                let (r, c) = (cell.row as usize, cell.col as usize);
++                if r < grid.len() && c < grid[r].len() {
++                    grid[r][c] = cell
++                        .paragraphs
++                        .iter()
++                        .map(|p| p.text.as_str())
++                        .filter(|t| !t.is_empty())
++                        .collect::<Vec<_>>()
++                        .join(" ");
++                }
++            }
++            let at = para.control_text_positions().get(control_idx).copied().unwrap_or(0);
++            (grid.into_iter().map(|row| row.join(&sep)).collect::<Vec<_>>(), at)
++        };
++        self.delete_table_control_native(section_idx, parent_para, control_idx)?;
++        let mut para = parent_para;
++        let mut offset = at.min(self.document.sections[section_idx].paragraphs[para].text.chars().count());
++        for (i, line) in lines.iter().enumerate() {
++            if i > 0 {
++                self.split_paragraph_native(section_idx, para, offset, None)?;
++                para += 1;
++                offset = 0;
++            }
++            if !line.is_empty() {
++                self.insert_text_native(section_idx, para, offset, line)?;
++                offset += line.chars().count();
++            }
++        }
++        Ok(format!(
++            "{{\"ok\":true,\"paraIdx\":{},\"charOffset\":{},\"lines\":{}}}",
++            para, offset, lines.len()
++        ))
++    }
++
+         Err(HwpError::RenderError("경로가 비어있습니다".to_string()))
+     }
+     /// 커서 위치에 새 표를 삽입한다 (네이티브).
+@@ -1770,3 +1893,43 @@ mod tests {
+         assert_cells_inherit_cursor_shape(table_of(&core));
+     }
+ }
++
++#[cfg(test)]
++mod text_table_conversion_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    #[test]
++    fn text_becomes_a_table_and_back_to_text() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.insert_text_native(0, 0, 0, "이름\t점수").unwrap();
++        core.split_paragraph_native(0, 0, 5, None).unwrap();
++        core.insert_text_native(0, 1, 0, "가\t90").unwrap();
++        let r: serde_json::Value =
++            serde_json::from_str(&core.text_to_table_native(0, 0, 1, "tab").unwrap()).unwrap();
++        assert_eq!(r["ok"], true, "{r}");
++        assert_eq!((r["rows"].as_u64(), r["cols"].as_u64()), (Some(2), Some(2)));
++        let pi = r["paraIdx"].as_u64().unwrap() as usize;
++        let ci = r["controlIdx"].as_u64().unwrap() as usize;
++        let Control::Table(t) = &core.document.sections[0].paragraphs[pi].controls[ci] else {
++            panic!("표가 생긴다");
++        };
++        let texts: Vec<String> = t.cells.iter().map(|c| c.paragraphs[0].text.clone()).collect();
++        assert_eq!(texts, vec!["이름", "점수", "가", "90"]);
++
++        let back: serde_json::Value =
++            serde_json::from_str(&core.table_to_text_native(0, pi, ci, "comma").unwrap()).unwrap();
++        assert_eq!(back["ok"], true, "{back}");
++        let all: Vec<String> = core.document.sections[0].paragraphs.iter().map(|p| p.text.clone()).collect();
++        assert!(all.iter().any(|t| t == "이름,점수"), "{all:?}");
++        assert!(all.iter().any(|t| t == "가,90"), "{all:?}");
++        let tables = core.document.sections[0]
++            .paragraphs
++            .iter()
++            .flat_map(|p| p.controls.iter())
++            .filter(|c| matches!(c, Control::Table(_)))
++            .count();
++        assert_eq!(tables, 0);
++    }
++}
+diff --git a/src/document_core/queries/bookmark_query.rs b/src/document_core/queries/bookmark_query.rs
+index 28789321d..7260f69f8 100644
+--- a/src/document_core/queries/bookmark_query.rs
++++ b/src/document_core/queries/bookmark_query.rs
+@@ -116,6 +116,65 @@ impl DocumentCore {
+         Ok(r#"{"ok":true}"#.to_string())
+     }
+ 
++    /// 한글 「입력 → 글자 겹치기」: 캐럿 자리에 겹친 글자(tcps)를 넣는다.
++    ///
++    /// `border_type` 0 글자끼리, 1 원, 2 반전 원, 3 사각형, 4 반전 사각형. `inner_size` 는 안쪽
++    /// 글자 크기의 10% 단계(0 = 원래 크기). 글자 모양은 캐럿 자리 글자 모양을 글자마다 쓴다.
++    pub fn insert_char_overlap_native(
++        &mut self,
++        sec: usize,
++        para: usize,
++        char_offset: usize,
++        text: &str,
++        border_type: u8,
++        inner_size: i8,
++    ) -> Result<String, HwpError> {
++        let chars: Vec<char> = text.chars().filter(|c| !c.is_control()).take(9).collect();
++        if chars.is_empty() {
++            return Ok(r#"{"ok":false,"error":"겹칠 글자를 입력하세요."}"#.to_string());
++        }
++        if border_type > 4 {
++            return Ok(r#"{"ok":false,"error":"겹치기 종류는 0~4 입니다."}"#.to_string());
++        }
++        let section = self
++            .document
++            .sections
++            .get_mut(sec)
++            .ok_or_else(|| HwpError::RenderError("구역 범위 초과".into()))?;
++        let paragraph = section
++            .paragraphs
++            .get_mut(para)
++            .ok_or_else(|| HwpError::RenderError("문단 범위 초과".into()))?;
++        let char_offset = char_offset.min(paragraph.text.chars().count());
++        let shape_id = paragraph
++            .char_shape_id_at(char_offset.saturating_sub(1))
++            .or_else(|| paragraph.char_shape_id_at(char_offset))
++            .unwrap_or(0);
++        let insert_idx = find_control_insert_index(paragraph, char_offset);
++        paragraph.controls.insert(
++            insert_idx,
++            Control::CharOverlap(crate::model::control::CharOverlap {
++                char_shape_ids: vec![shape_id; chars.len()],
++                chars,
++                border_type,
++                inner_char_size: inner_size,
++                expansion: 0,
++            }),
++        );
++        if paragraph.ctrl_data_records.len() >= insert_idx {
++            paragraph.ctrl_data_records.insert(insert_idx, None);
++        }
++        // 책갈피와 같이 스트림 8유닛을 차지하는 인라인 컨트롤이다.
++        paragraph.shift_for_inline_control_insert(insert_idx, char_offset);
++        paragraph.char_count += 8;
++        paragraph.stored_text_partition_dirty = true;
++        section.raw_stream = None;
++        self.reflow_paragraph(sec, para);
++        self.recompose_section(sec);
++        self.paginate_if_needed();
++        Ok(r#"{"ok":true}"#.to_string())
++    }
++
+     /// 책갈피 삭제
+     pub fn delete_bookmark_native(
+         &mut self,
+@@ -589,3 +648,35 @@ mod tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod char_overlap_insert_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    #[test]
++    fn char_overlap_is_inserted_at_the_caret_and_survives_save() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.insert_text_native(0, 0, 0, "가나").expect("text");
++        let r = core.insert_char_overlap_native(0, 0, 1, "12", 1, -2).expect("overlap");
++        assert!(r.contains("\"ok\":true"), "{r}");
++        let para = &core.document.sections[0].paragraphs[0];
++        let overlap = para.controls.iter().find_map(|c| match c {
++            Control::CharOverlap(o) => Some(o.clone()),
++            _ => None,
++        });
++        let overlap = overlap.expect("글자 겹치기 컨트롤");
++        assert_eq!(overlap.chars, vec!['1', '2']);
++        assert_eq!(overlap.border_type, 1);
++        assert_eq!(para.text, "가나", "본문 글자는 그대로");
++
++        let saved = core.export_hwp_native().expect("save");
++        let reopened = DocumentCore::from_bytes(&saved).expect("reopen");
++        let again = reopened.document.sections[0].paragraphs[0]
++            .controls
++            .iter()
++            .any(|c| matches!(c, Control::CharOverlap(o) if o.chars == vec!['1', '2']));
++        assert!(again, "저장 뒤에도 남는다");
++    }
++}
+diff --git a/src/wasm_api.rs b/src/wasm_api.rs
+index 5674e3bd6..ea9cd332a 100644
+--- a/src/wasm_api.rs
++++ b/src/wasm_api.rs
+@@ -4847,6 +4847,32 @@ impl HwpDocument {
+             .map_err(|e| e.into())
+     }
+ 
++    /// 한글 「문자열을 표로」 — 문단 범위를 표로. `separator`: tab·comma·space 또는 글자 하나.
++    #[wasm_bindgen(js_name = textToTable)]
++    pub fn text_to_table(
++        &mut self,
++        section_idx: u32,
++        start_para: u32,
++        end_para: u32,
++        separator: &str,
++    ) -> Result<String, JsValue> {
++        self.text_to_table_native(section_idx as usize, start_para as usize, end_para as usize, separator)
++            .map_err(|e| e.into())
++    }
++
++    /// 한글 「표를 문자열로」 — 표를 줄마다 한 문단으로. `separator`: tab·comma·space 또는 글자 하나.
++    #[wasm_bindgen(js_name = tableToText)]
++    pub fn table_to_text(
++        &mut self,
++        section_idx: u32,
++        parent_para: u32,
++        control_idx: u32,
++        separator: &str,
++    ) -> Result<String, JsValue> {
++        self.table_to_text_native(section_idx as usize, parent_para as usize, control_idx as usize, separator)
++            .map_err(|e| e.into())
++    }
++
+     #[wasm_bindgen(js_name = createShapeControl)]
+     pub fn create_shape_control(&mut self, json: &str) -> Result<String, JsValue> {
+         let sec = json_u32(json, "sectionIdx").unwrap_or(0) as usize;
+@@ -5134,6 +5160,30 @@ impl HwpDocument {
+             .map_err(|e| e.into())
+     }
+ 
++    /// 한글 「각주/미주 변환」 — 문서의 각주를 모두 미주로(true) 또는 미주를 모두 각주로(false).
++    #[wasm_bindgen(js_name = convertNotes)]
++    pub fn convert_notes(&mut self, to_endnote: bool) -> Result<String, JsValue> {
++        self.convert_notes_native(to_endnote).map_err(|e| e.into())
++    }
++
++    /// 각주 모양을 조회한다.
++    #[wasm_bindgen(js_name = getFootnoteShape)]
++    pub fn get_footnote_shape(&self, section_idx: u32) -> Result<String, JsValue> {
++        self.get_footnote_shape_native(section_idx as usize)
++            .map_err(|e| e.into())
++    }
++
++    /// 각주 모양을 적용한다.
++    #[wasm_bindgen(js_name = applyFootnoteShape)]
++    pub fn apply_footnote_shape(
++        &mut self,
++        section_idx: u32,
++        props_json: &str,
++    ) -> Result<String, JsValue> {
++        self.apply_footnote_shape_native(section_idx as usize, props_json)
++            .map_err(|e| e.into())
++    }
++
+     /// 미주 모양을 적용한다.
+     #[wasm_bindgen(js_name = applyEndnoteShape)]
+     pub fn apply_endnote_shape(
+@@ -8671,6 +8721,27 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    /// 한글 「쪽 번호 매기기」 — 캐럿 문단에 쪽 번호 위치·모양·줄표를 놓는다.
++    #[wasm_bindgen(js_name = setPageNumberPos)]
++    pub fn set_page_number_pos(
++        &mut self,
++        sec: u32,
++        para: u32,
++        format: u32,
++        position: u32,
++        dash: bool,
++    ) -> Result<String, JsValue> {
++        self.set_page_number_pos_native(sec as usize, para as usize, format as u8, position as u8, dash)
++            .map_err(|e| e.into())
++    }
++
++    /// 캐럿 문단(없으면 앞쪽 가장 가까운) 쪽 번호 위치.
++    #[wasm_bindgen(js_name = getPageNumberPos)]
++    pub fn get_page_number_pos(&self, sec: u32, para: u32) -> Result<String, JsValue> {
++        self.get_page_number_pos_native(sec as usize, para as usize)
++            .map_err(|e| e.into())
++    }
++
+     /// 감추기 설정
+     #[wasm_bindgen(js_name = setPageHide)]
+     pub fn set_page_hide(
+@@ -9444,6 +9515,28 @@ impl HwpDocument {
+             .map_err(|e| e.into())
+     }
+ 
++    /// 한글 「글자 겹치기」 — 캐럿 자리에 겹친 글자를 넣는다. `border_type` 0~4, `inner_size` 10% 단계.
++    #[wasm_bindgen(js_name = insertCharOverlap)]
++    pub fn insert_char_overlap(
++        &mut self,
++        sec: u32,
++        para: u32,
++        char_offset: u32,
++        text: &str,
++        border_type: u32,
++        inner_size: i32,
++    ) -> Result<String, JsValue> {
++        self.insert_char_overlap_native(
++            sec as usize,
++            para as usize,
++            char_offset as usize,
++            text,
++            border_type.min(255) as u8,
++            inner_size.clamp(-128, 127) as i8,
++        )
++        .map_err(|e| e.into())
++    }
++
+     /// 책갈피 추가
+     #[wasm_bindgen(js_name = addBookmark)]
+     pub fn add_bookmark(
+-- 
+2.50.1 (Apple Git-155)
+

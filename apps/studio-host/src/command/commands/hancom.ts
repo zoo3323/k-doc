@@ -229,6 +229,316 @@ function openPageHide(services: Services): void {
   new PageHideDialog(services, pos, current).show();
 }
 
+// ─── 입력 → 글자 겹치기 ───────────────────────────────────
+const OVERLAP_KINDS: ReadonlyArray<[number, string]> = [
+  [0, '모양 없음(글자끼리)'], [1, '원'], [2, '반전 원'], [3, '사각형'], [4, '반전 사각형'],
+];
+const OVERLAP_SIZES: ReadonlyArray<[number, string]> = [
+  [0, '100%'], [-1, '90%'], [-2, '80%'], [-3, '70%'], [-4, '60%'], [-5, '50%'],
+];
+
+class CharOverlapDialog extends ModalDialog {
+  private text!: HTMLInputElement;
+  private kind!: HTMLSelectElement;
+  private size!: HTMLSelectElement;
+
+  constructor(private services: Services) {
+    super('글자 겹치기', 300);
+  }
+
+  private select(options: ReadonlyArray<[number, string]>, value: number): HTMLSelectElement {
+    const el = document.createElement('select');
+    el.style.width = '100%';
+    for (const [v, label] of options) {
+      const option = document.createElement('option');
+      option.value = String(v);
+      option.textContent = label;
+      el.appendChild(option);
+    }
+    el.value = String(value);
+    return el;
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gridTemplateColumns = 'auto 1fr';
+    body.style.gap = '8px 10px';
+    body.style.alignItems = 'center';
+    this.text = document.createElement('input');
+    this.text.maxLength = 9;
+    this.text.placeholder = '예: 1';
+    this.kind = this.select(OVERLAP_KINDS, 1);
+    this.size = this.select(OVERLAP_SIZES, 0);
+    body.append(
+      document.createTextNode('겹쳐 쓸 글자'), this.text,
+      document.createTextNode('겹치기 종류'), this.kind,
+      document.createTextNode('글자 크기'), this.size,
+    );
+    return body;
+  }
+
+  show(): void {
+    super.show();
+    setTimeout(() => this.text.focus(), 30);
+  }
+
+  protected onConfirm(): boolean {
+    const text = this.text.value.trim();
+    if (!text) return false;
+    const ih = this.services.getInputHandler();
+    if (!ih) return true;
+    const pos = ih.getCursorPosition();
+    const borderType = Number(this.kind.value);
+    const innerSize = Number(this.size.value);
+    ih.executeOperation({
+      kind: 'snapshot',
+      operationType: 'insertCharOverlap',
+      operation: (wasm) => {
+        const result = wasm.insertCharOverlap(pos.sectionIndex, pos.paragraphIndex, pos.charOffset, text, borderType, innerSize);
+        if (!result.ok) throw new Error(result.error ?? '글자 겹치기를 넣지 못했습니다');
+        return { ...pos, charOffset: pos.charOffset + 1 };
+      },
+    });
+    ih.focus();
+    return true;
+  }
+}
+
+// ─── 입력 → 주석 → 각주/미주 변환 ─────────────────────────
+class ConvertNotesDialog extends ModalDialog {
+  private toEndnote!: HTMLInputElement;
+
+  constructor(private services: Services) {
+    super('각주/미주 변환', 280);
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gap = '8px';
+    const radio = (label: string, checked: boolean) => {
+      const row = document.createElement('label');
+      row.style.display = 'flex';
+      row.style.gap = '6px';
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'kdoc-convert-notes';
+      input.checked = checked;
+      row.append(input, document.createTextNode(label));
+      body.appendChild(row);
+      return input;
+    };
+    this.toEndnote = radio('각주를 미주로', true);
+    radio('미주를 각주로', false);
+    return body;
+  }
+
+  protected onConfirm(): boolean {
+    const ih = this.services.getInputHandler();
+    if (!ih) return true;
+    const toEndnote = this.toEndnote.checked;
+    let converted = 0;
+    ih.executeOperation({
+      kind: 'snapshot',
+      operationType: 'convertNotes',
+      operation: (wasm) => {
+        converted = wasm.convertNotes(toEndnote).converted;
+        return converted > 0 ? ih.getCursorPosition() : null;
+      },
+    });
+    showToast({ message: converted > 0 ? `${converted}개를 바꿨어요.` : '바꿀 주석이 없어요.' });
+    return true;
+  }
+}
+
+// ─── 표 → 문자열을 표로 / 표를 문자열로 ───────────────────
+const SEPARATORS: ReadonlyArray<[string, string]> = [['tab', '탭'], ['comma', '쉼표(,)'], ['space', '빈칸']];
+
+class SeparatorDialog extends ModalDialog {
+  private choice!: HTMLSelectElement;
+
+  constructor(title: string, private onPick: (separator: string) => void) {
+    super(title, 260);
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gridTemplateColumns = 'auto 1fr';
+    body.style.gap = '8px 10px';
+    body.style.alignItems = 'center';
+    this.choice = document.createElement('select');
+    for (const [value, label] of SEPARATORS) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      this.choice.appendChild(option);
+    }
+    body.append(document.createTextNode('구분 기호'), this.choice);
+    return body;
+  }
+
+  protected onConfirm(): boolean {
+    this.onPick(this.choice.value);
+    return true;
+  }
+}
+
+function textToTable(services: Services): void {
+  const ih = services.getInputHandler();
+  const selection = ih?.getSelection();
+  if (!ih || !selection) return;
+  const { start, end } = selection;
+  if (start.parentParaIndex !== undefined || end.parentParaIndex !== undefined || start.sectionIndex !== end.sectionIndex) {
+    showToast({ message: '본문 문단을 골라 주세요.' });
+    return;
+  }
+  new SeparatorDialog('문자열을 표로', (separator) => {
+    let failed = '';
+    ih.executeOperation({
+      kind: 'snapshot',
+      operationType: 'textToTable',
+      operation: (wasm) => {
+        const result = wasm.textToTable(start.sectionIndex, start.paragraphIndex, end.paragraphIndex, separator);
+        if (!result.ok) {
+          failed = result.reason ?? '표로 바꾸지 못했어요.';
+          return null;
+        }
+        return { sectionIndex: start.sectionIndex, paragraphIndex: result.paraIdx ?? start.paragraphIndex, charOffset: 0 };
+      },
+    });
+    if (failed) showToast({ message: failed });
+  }).show();
+}
+
+function tableToText(services: Services): void {
+  const ih = services.getInputHandler();
+  if (!ih) return;
+  const pos = currentCaret(ih);
+  if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || (pos.cellPath?.length ?? 0) > 1) {
+    showToast({ message: '본문 표 안에서 써 주세요.' });
+    return;
+  }
+  const sec = pos.sectionIndex;
+  const ppi = pos.parentParaIndex;
+  const ci = pos.controlIndex;
+  new SeparatorDialog('표를 문자열로', (separator) => {
+    ih.executeOperation({
+      kind: 'snapshot',
+      operationType: 'tableToText',
+      operation: (wasm) => {
+        const result = wasm.tableToText(sec, ppi, ci, separator);
+        if (!result.ok) return null;
+        return { sectionIndex: sec, paragraphIndex: result.paraIdx ?? ppi, charOffset: result.charOffset ?? 0 };
+      },
+    });
+  }).show();
+}
+
+// ─── 쪽 → 쪽 번호 매기기 ─────────────────────────────────
+const PAGE_NUMBER_POSITIONS: ReadonlyArray<[number, string]> = [
+  [0, '없음'],
+  [1, '왼쪽 위'], [2, '가운데 위'], [3, '오른쪽 위'],
+  [4, '왼쪽 아래'], [5, '가운데 아래'], [6, '오른쪽 아래'],
+  [7, '바깥쪽 위'], [8, '바깥쪽 아래'], [9, '안쪽 위'], [10, '안쪽 아래'],
+];
+// 표 134 번호 모양 중 엔진이 그대로 그리는 것만.
+const PAGE_NUMBER_FORMATS: ReadonlyArray<[number, string]> = [
+  [0, '1, 2, 3'], [1, '①, ②, ③'], [2, 'I, II, III'], [3, 'i, ii, iii'], [4, 'A, B, C'], [5, 'a, b, c'],
+];
+
+class PageNumberPosDialog extends ModalDialog {
+  private position!: HTMLSelectElement;
+  private format!: HTMLSelectElement;
+  private dash!: HTMLInputElement;
+
+  constructor(
+    private services: Services,
+    private pos: { sectionIndex: number; paragraphIndex: number },
+    private current: { position?: number; format?: number; dash?: boolean },
+  ) {
+    super('쪽 번호 매기기', 300);
+  }
+
+  private select(options: ReadonlyArray<[number, string]>, value: number): HTMLSelectElement {
+    const el = document.createElement('select');
+    el.style.width = '100%';
+    for (const [v, label] of options) {
+      const option = document.createElement('option');
+      option.value = String(v);
+      option.textContent = label;
+      el.appendChild(option);
+    }
+    el.value = String(value);
+    return el;
+  }
+
+  protected createBody(): HTMLElement {
+    const body = document.createElement('div');
+    body.style.padding = '12px 16px';
+    body.style.display = 'grid';
+    body.style.gridTemplateColumns = 'auto 1fr';
+    body.style.gap = '8px 10px';
+    body.style.alignItems = 'center';
+    this.position = this.select(PAGE_NUMBER_POSITIONS, this.current.position ?? 5);
+    this.format = this.select(PAGE_NUMBER_FORMATS, this.current.format ?? 0);
+    this.dash = document.createElement('input');
+    this.dash.type = 'checkbox';
+    this.dash.checked = this.current.dash ?? false;
+    const dashLabel = document.createElement('label');
+    dashLabel.style.display = 'flex';
+    dashLabel.style.gap = '6px';
+    dashLabel.append(this.dash, document.createTextNode('줄표 넣기 (- 1 -)'));
+    body.append(
+      document.createTextNode('번호 위치'), this.position,
+      document.createTextNode('번호 모양'), this.format,
+      document.createElement('span'), dashLabel,
+    );
+    return body;
+  }
+
+  protected onConfirm(): boolean {
+    const ih = this.services.getInputHandler();
+    if (!ih) return true;
+    const { sectionIndex, paragraphIndex } = this.pos;
+    const format = Number(this.format.value);
+    const position = Number(this.position.value);
+    const dash = this.dash.checked;
+    ih.executeOperation({
+      kind: 'snapshot',
+      operationType: 'setPageNumberPos',
+      operation: (wasm) => {
+        wasm.setPageNumberPos(sectionIndex, paragraphIndex, format, position, dash);
+        return ih.getCursorPosition();
+      },
+      meta: { actionId: 'page:page-number-pos', domain: 'page', refresh: 'full', dirtyScope: 'document' },
+    });
+    return true;
+  }
+}
+
+function openPageNumberPos(services: Services): void {
+  const ih = services.getInputHandler();
+  if (!ih) return;
+  const pos = currentCaret(ih);
+  if (pos.parentParaIndex !== undefined) {
+    showToast({ message: '쪽 번호 매기기는 본문 문단에서 열어 주세요.' });
+    return;
+  }
+  let current: { position?: number; format?: number; dash?: boolean } = {};
+  try {
+    const got = services.wasm.getPageNumberPos(pos.sectionIndex, pos.paragraphIndex);
+    if (got.exists) current = got;
+  } catch {
+    current = {};
+  }
+  new PageNumberPosDialog(services, pos, current).show();
+}
+
 // ─── 보기 ───────────────────────────────────────────────
 function toggleRootClass(name: string): void {
   document.documentElement.classList.toggle(name);
@@ -278,6 +588,44 @@ export const hancomCommands: CommandDef[] = [
     label: '감추기',
     canExecute: (ctx) => ctx.hasDocument && !ctx.inTable,
     execute(services) { openPageHide(services); },
+  },
+  {
+    id: 'insert:char-overlap',
+    label: '글자 겹치기',
+    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable && !ctx.inTable,
+    execute(services) {
+      const pos = services.getInputHandler()?.getCursorPosition();
+      if (pos && (pos.parentParaIndex !== undefined || pos.cellPath?.length)) {
+        showToast({ message: '글자 겹치기는 본문 문단에 넣어 주세요.' });
+        return;
+      }
+      new CharOverlapDialog(services).show();
+    },
+  },
+  {
+    id: 'insert:convert-notes',
+    label: '각주/미주 변환',
+    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable,
+    execute(services) { new ConvertNotesDialog(services).show(); },
+  },
+  {
+    id: 'table:text-to-table',
+    label: '문자열을 표로',
+    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable && ctx.hasSelection && !ctx.inTable,
+    execute(services) { textToTable(services); },
+  },
+  {
+    id: 'table:table-to-text',
+    label: '표를 문자열로',
+    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable && ctx.inTable,
+    execute(services) { tableToText(services); },
+  },
+  {
+    id: 'page:page-number-pos',
+    label: '쪽 번호 매기기',
+    shortcutLabel: 'Ctrl+M,P',
+    canExecute: (ctx) => ctx.hasDocument && !ctx.inTable,
+    execute(services) { openPageNumberPos(services); },
   },
   {
     id: 'format:toggle-outline',
