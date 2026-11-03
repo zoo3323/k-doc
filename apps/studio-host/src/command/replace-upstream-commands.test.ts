@@ -70,6 +70,27 @@ describe('replaceUpstreamCommands', () => {
     expect([...new Set(missing)]).toEqual([]);
   });
 
+  // 한글 기본 기능은 엔진·명령이 있어도 메뉴에 없으면 사람이 못 쓴다(2단계 편집 빈칸).
+  it('exposes the Hancom basics that the engine already supports', () => {
+    const exposed = new Set(Array.from(studioHtml.matchAll(/\bdata-cmd="([^"]+)"/g), ([, id]) => id));
+    const hancomBasics = [
+      'edit:format-copy',
+      'edit:format-paste',
+      'view:zoom-dialog',
+      'view:toggle-grid',
+      'insert:equation',
+      'insert:endnote',
+      'insert:endnote-shape',
+      'insert:note-close',
+      'page:page-border',
+      'page:insert-field-pagenum',
+      'table:transpose-copy',
+      'table:transpose-paste',
+    ];
+
+    expect(hancomBasics.filter((id) => !exposed.has(id))).toEqual([]);
+  });
+
   it('keeps production shortcuts unique and backed by registered commands', () => {
     const shortcutKeys = defaultShortcuts.map(([shortcut]) => [
       shortcut.key.toLowerCase(),

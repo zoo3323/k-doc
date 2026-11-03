@@ -30,6 +30,7 @@ import { HomeScreen } from '@/ui/home-screen';
 import type { DesktopBridgeApi } from '@/core/tauri-bridge';
 import { createCommandRuntime } from './host/command-runtime';
 import { createRendererSession } from './host/renderer-session';
+import { parseHeaderFooterModeChanged } from '@upstream/engine/header-footer-mode';
 
 const wasm = createBridge();
 const eventBus = new EventBus();
@@ -490,42 +491,50 @@ function setupEventListeners(): void {
     }
   });
 
-  // 개체 선택 시 회전/대칭 버튼 그룹 표시/숨김
+  // 개체 선택 시 회전/대칭 버튼 그룹 표시/숨김 — 머리말·주석 편집 중에는 숨긴다
   const rotateGroup = document.querySelector('.tb-rotate-group') as HTMLElement | null;
-  if (rotateGroup) {
-    eventBus.on('picture-object-selection-changed', (selected) => {
-      rotateGroup.style.display = (selected as boolean) ? '' : 'none';
-    });
-  }
+  let pictureObjectSelected = false;
+  let headerFooterToolbarActive = false;
+  let noteToolbarActive = false;
+  const syncRotateGroup = (): void => {
+    if (!rotateGroup) return;
+    const visible = pictureObjectSelected && !headerFooterToolbarActive && !noteToolbarActive;
+    rotateGroup.style.display = visible ? '' : 'none';
+  };
+  eventBus.on('picture-object-selection-changed', (selected) => {
+    pictureObjectSelected = selected as boolean;
+    syncRotateGroup();
+  });
 
-  // 머리말/꼬리말 편집 모드 시 도구상자 전환 + 본문 dimming
+  // 머리말/꼬리말·각주/미주 편집 모드 시 도구상자 전환 + 본문 dimming
   const hfGroup = document.querySelector('.tb-headerfooter-group') as HTMLElement | null;
   const hfLabel = hfGroup?.querySelector('.tb-hf-label') as HTMLElement | null;
-  const defaultTbGroups = document.querySelectorAll('#icon-toolbar > .tb-group:not(.tb-headerfooter-group):not(.tb-rotate-group), #icon-toolbar > .tb-sep');
+  const noteGroup = document.querySelector('.tb-note-group') as HTMLElement | null;
+  const defaultTbGroups = document.querySelectorAll('#icon-toolbar > .tb-group:not(.tb-headerfooter-group):not(.tb-note-group):not(.tb-rotate-group), #icon-toolbar > .tb-sep');
   const scrollContainer = document.getElementById('scroll-container');
   const styleBar = document.getElementById('style-bar');
-
-  eventBus.on('headerFooterModeChanged', (mode) => {
-    const isActive = (mode as string) !== 'none';
-    // 도구상자 전환
-    if (hfGroup) {
-      hfGroup.style.display = isActive ? '' : 'none';
-    }
-    if (hfLabel) {
-      hfLabel.textContent = (mode as string) === 'header' ? '머리말' : (mode as string) === 'footer' ? '꼬리말' : '';
-    }
+  const syncDefaultToolbar = (): void => {
+    const hidden = headerFooterToolbarActive || noteToolbarActive;
     defaultTbGroups.forEach((el) => {
-      (el as HTMLElement).style.display = isActive ? 'none' : '';
+      (el as HTMLElement).style.display = hidden ? 'none' : '';
     });
+    syncRotateGroup();
+  };
+
+  eventBus.on('headerFooterModeChanged', (payload) => {
+    const state = parseHeaderFooterModeChanged(payload);
+    headerFooterToolbarActive = state !== 'none';
+    if (hfGroup) hfGroup.style.display = headerFooterToolbarActive ? '' : 'none';
+    if (hfLabel) hfLabel.textContent = state === 'none' ? '' : state.mode === 'header' ? '머리말' : '꼬리말';
+    syncDefaultToolbar();
     // 서식 도구 모음은 머리말/꼬리말 편집 시에도 유지 (문단/글자 모양 설정 필요)
-    // 본문 dimming
-    if (scrollContainer) {
-      if (isActive) {
-        scrollContainer.classList.add('hf-editing');
-      } else {
-        scrollContainer.classList.remove('hf-editing');
-      }
-    }
+    scrollContainer?.classList.toggle('hf-editing', headerFooterToolbarActive);
+  });
+
+  eventBus.on('footnoteModeChanged', (active) => {
+    noteToolbarActive = active as boolean;
+    if (noteGroup) noteGroup.style.display = noteToolbarActive ? '' : 'none';
+    syncDefaultToolbar();
   });
 }
 
