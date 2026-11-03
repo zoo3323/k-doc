@@ -1,0 +1,992 @@
+From 2d76affe800cb7033d3588b5448c20d7d73b1dd3 Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 15:51:09 +0900
+Subject: [PATCH] =?UTF-8?q?feat(hancom):=20=ED=95=9C=EA=B8=80=20=EB=A9=94?=
+ =?UTF-8?q?=EB=89=B4=20=EB=B9=88=EC=B9=B8=20=EC=B1=84=EC=9A=B0=EA=B8=B0=20?=
+ =?UTF-8?q?=E2=80=94=20=EC=BA=A1=EC=85=98=20=EC=9C=84=EC=B9=98=209?=
+ =?UTF-8?q?=EB=B0=A9=ED=96=A5,=20=EC=85=80=20=EB=84=88=EB=B9=84=C2=B7?=
+ =?UTF-8?q?=EB=86=92=EC=9D=B4=EB=A5=BC=20=EA=B0=99=EA=B2=8C,=20=EB=B3=B8?=
+ =?UTF-8?q?=EB=AC=B8=20=EC=AA=BD=20=EB=B2=88=ED=98=B8=20=ED=95=84=EB=93=9C?=
+ =?UTF-8?q?,=20=EB=AC=B8=EB=8B=A8=20=EB=9D=A0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 캡션 넣기 위·아래·왼쪽/오른쪽 위·가운데·아래·캡션 없음(그림·도형·표)
+- equalizeTableCells: F5 블록 칸·줄을 합은 두고 고르게(중첩 표 경로 포함), 셀 블록 H/W 키
+- insertPageNumberField: 현재 쪽 번호·전체 쪽수를 본문 캐럿 자리에
+- insertParagraphBand: 본문 폭 1mm 검정 띠(선 없음)
+- 표 안의 표에서 표/셀 속성·셀 테두리·계산식 창이 바깥 표를 고치던 것을 막음
+- 개체 속성에서 셀 안 둘째 수식이 첫 수식으로 열리던 것 고침
+- 개요 적용/해제, Ctrl+M,S 감추기 창 / Ctrl+M,F 계산식 / Ctrl+M,L 문단 띠 / Ctrl+K,D 날짜
+---
+ rhwp-studio/src/command/commands/format.ts    |   7 +-
+ rhwp-studio/src/command/commands/insert.ts    | 163 ++++++++++++++++--
+ rhwp-studio/src/command/commands/table.ts     |  52 +++++-
+ .../src/command/contextual-shortcut.ts        |   9 +-
+ .../src/core/mutation-method-registry.ts      |   2 +
+ rhwp-studio/src/core/wasm-bridge.ts           |  21 +++
+ .../src/engine/input-handler-keyboard.ts      |  10 +-
+ rhwp-studio/src/engine/input-handler.ts       |  15 ++
+ .../issue-4135-contextual-shortcut.test.ts    |   9 +-
+ .../tests/mutation-routing-guard.test.ts      |   4 +-
+ .../tests/table-cell-width-equal-1491.test.ts |  14 +-
+ .../commands/object_ops/shape.rs              |  81 +++++++++
+ src/document_core/commands/table_ops.rs       | 121 +++++++++++++
+ src/document_core/queries/hwpctrl_sets.rs     |  64 ++++++-
+ src/wasm_api.rs                               |  60 +++++++
+ 15 files changed, 602 insertions(+), 30 deletions(-)
+
+diff --git a/rhwp-studio/src/command/commands/format.ts b/rhwp-studio/src/command/commands/format.ts
+index 99fa75dd2..7f42e17c0 100644
+--- a/rhwp-studio/src/command/commands/format.ts
++++ b/rhwp-studio/src/command/commands/format.ts
+@@ -1,4 +1,5 @@
+ import type { CommandDef } from '../types';
++import { showToast } from '@/ui/toast';
+ import { CharShapeDialog } from '@/ui/char-shape-dialog';
+ import { ParaShapeDialog } from '@/ui/para-shape-dialog';
+ import { NumberingDialog } from '@/ui/numbering-dialog';
+@@ -476,7 +477,7 @@ export const formatCommands: CommandDef[] = [
+         if (!ref) return;
+         if (ref.type === 'equation') {
+           const dialog = new EquationPropertiesDialog(services.wasm, services.eventBus, services);
+-          dialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef);
++          dialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef, ref.innerControlIdx);
+           return;
+         }
+         const dialog = new PicturePropsDialog(services.wasm, services.eventBus, services);
+@@ -488,6 +489,10 @@ export const formatCommands: CommandDef[] = [
+       if (ih.isInTableObjectSelection()) {
+         const pos = ih.getCursorPosition();
+         if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++        if ((pos.cellPath?.length ?? 0) > 1) {
++          showToast({ message: '표 안의 표에서는 표/셀 속성·셀 테두리·계산식 창을 아직 열 수 없어요.' });
++          return;
++        }
+         const tableCtx = { sec: pos.sectionIndex, ppi: pos.parentParaIndex, ci: pos.controlIndex };
+         const dialog = new TableCellPropsDialog(services.wasm, services.eventBus, tableCtx, pos.cellIndex, 'table', services);
+         dialog.show();
+diff --git a/rhwp-studio/src/command/commands/insert.ts b/rhwp-studio/src/command/commands/insert.ts
+index 3485ea781..cfb4b2238 100644
+--- a/rhwp-studio/src/command/commands/insert.ts
++++ b/rhwp-studio/src/command/commands/insert.ts
+@@ -39,6 +39,25 @@ function stub(id: string, label: string, icon?: string, shortcut?: string): Comm
+   };
+ }
+ 
++type CaptionSide = 'Top' | 'Bottom' | 'Left' | 'Right';
++type CaptionVert = 'Top' | 'Center' | 'Bottom';
++const CAPTION_POSITIONS: ReadonlyArray<[string, string, CaptionSide, CaptionVert] | [string, string, null, null]> = [
++  ['insert:caption-top', 'command.insert.captionTop.registryLabel', 'Top', 'Top'],
++  ['insert:caption-lt', 'command.insert.captionLt.registryLabel', 'Left', 'Top'],
++  ['insert:caption-lm', 'command.insert.captionLm.registryLabel', 'Left', 'Center'],
++  ['insert:caption-lb', 'command.insert.captionLb.registryLabel', 'Left', 'Bottom'],
++  ['insert:caption-rt', 'command.insert.captionRt.registryLabel', 'Right', 'Top'],
++  ['insert:caption-rm', 'command.insert.captionRm.registryLabel', 'Right', 'Center'],
++  ['insert:caption-rb', 'command.insert.captionRb.registryLabel', 'Right', 'Bottom'],
++  ['insert:caption-bottom', 'command.insert.captionBottom.registryLabel', 'Bottom', 'Top'],
++  ['insert:caption-none', 'command.insert.captionNone.label', null, null],
++];
++// 표 속성은 방향·세로 정렬을 숫자로 받는다(table_ops.rs: Left 0·Right 1·Top 2·Bottom 3 / Top 0·Center 1·Bottom 2).
++const TABLE_CAPTION_SIDE: Record<CaptionSide, number> = { Left: 0, Right: 1, Top: 2, Bottom: 3 };
++const TABLE_CAPTION_VERT: Record<CaptionVert, number> = { Top: 0, Center: 1, Bottom: 2 };
++const CAPTION_SIDE_WIDTH = Math.round(30 * 283.46);
++const CAPTION_SPACING = Math.round(3 * 283.46);
++
+ let picturePropsDialog: PicturePropsDialog | null = null;
+ let chartDataDialog: ChartDataDialog | null = null;
+ let equationEditorDialog: EquationEditorDialog | null = null;
+@@ -299,16 +318,30 @@ export const insertCommands: CommandDef[] = [
+       fieldInsertDialog.show();
+     },
+   },
+-  stub('insert:caption-top', t('command.insert.captionTop.registryLabel')),
+-  stub('insert:caption-lt', t('command.insert.captionLt.registryLabel')),
+-  stub('insert:caption-lm', t('command.insert.captionLm.registryLabel')),
+-  stub('insert:caption-lb', t('command.insert.captionLb.registryLabel')),
+-  stub('insert:caption-rt', t('command.insert.captionRt.registryLabel')),
+-  stub('insert:caption-rm', t('command.insert.captionRm.registryLabel')),
+-  stub('insert:caption-rb', t('command.insert.captionRb.registryLabel')),
+-  stub('insert:caption-bottom', t('command.insert.captionBottom.registryLabel')),
+-  stub('insert:caption-none', t('command.insert.captionNone.label')),
+-  stub('insert:para-band', t('command.insert.paraBand.label')),
++  ...captionPositionCommands(),
++  {
++    id: 'insert:para-band',
++    label: t('command.insert.paraBand.label'),
++    shortcutLabel: 'Ctrl+M,L',
++    canExecute: (ctx) => ctx.hasDocument && ctx.isEditable && !ctx.inTable,
++    execute(services) {
++      const ih = services.getInputHandler();
++      if (!ih) return;
++      const pos = ih.getCursorPosition();
++      if (pos.parentParaIndex !== undefined || pos.cellPath?.length) {
++        showToast({ message: '문단 띠는 본문 문단에 넣어 주세요.' });
++        return;
++      }
++      ih.executeOperation({
++        kind: 'snapshot',
++        operationType: 'insertParagraphBand',
++        operation: (wasm) => {
++          wasm.insertParagraphBand(pos.sectionIndex, pos.paragraphIndex, pos.charOffset);
++          return pos;
++        },
++      });
++    },
++  },
+   stub('insert:comment', t('command.insert.comment.label'), 'icon-comment'),
+   {
+     id: 'insert:footnote',
+@@ -865,3 +898,113 @@ function toggleFlip(services: import('../types').CommandServices, key: 'horzFlip
+   // 위 rotate 와 동일 — 토글이지만 setter 에 넘기는 값은 절대값(`!cur`)이라 역연산이 자명하다.
+   applyAbsolutePropChange(services, ih, ref, 'flipObject', { [key]: cur }, { [key]: !cur });
+ }
++
++/**
++ * 한글 「입력 → 캡션 넣기」 위치 9가지. 캡션이 없으면 그 자리에 넣고 캡션 글 편집으로 들어가고,
++ * 있으면 자리만 옮긴다. 「캡션 없음」은 뗀다. 대상은 고른 그림·도형, 아니면 캐럿이 있는 표다.
++ */
++function captionPositionCommands(): CommandDef[] {
++  return CAPTION_POSITIONS.map(([id, labelKey, side, vert]) => ({
++    id,
++    label: t(labelKey),
++    canExecute: (ctx) => ctx.inPictureObjectSelection || ctx.inTable || ctx.inTableObjectSelection,
++    execute(services) {
++      const ih = services.getInputHandler();
++      if (!ih) return;
++      if (ih.isInPictureObjectSelection()) {
++        applyObjectCaption(services, ih, side, vert);
++        return;
++      }
++      applyTableCaption(services, ih, side, vert);
++    },
++  }));
++}
++
++function applyObjectCaption(
++  services: import('../types').CommandServices,
++  ih: InputHandler,
++  side: CaptionSide | null,
++  vert: CaptionVert | null,
++): void {
++  const ref = ih.getSelectedPictureRef();
++  if (!ref) return;
++  if (ref.type === 'equation' || ref.type === 'group') {
++    showToast({ message: '이 개체에는 아직 캡션을 넣을 수 없어요.' });
++    return;
++  }
++  let props: Record<string, unknown>;
++  try { props = getProps(services, ref); } catch { return; }
++  const had = Boolean(props.hasCaption);
++  if (!side || !vert) {
++    if (!had) return;
++    recordObjectMutation(ih, 'captionRemove', (wasm) => { setObjectProps(wasm, ref, { hasCaption: false }); });
++    return;
++  }
++  let created: any = null;
++  recordObjectMutation(ih, had ? 'captionMove' : 'captionInsert', (wasm) => {
++    created = setObjectProps(wasm, ref, {
++      hasCaption: true,
++      captionDirection: side,
++      captionVertAlign: vert,
++      ...(had ? {} : { captionWidth: CAPTION_SIDE_WIDTH, captionSpacing: CAPTION_SPACING, captionIncludeMargin: false }),
++    });
++  }, had ? undefined : DEFER_REFRESH_TO_EXIT);
++  if (had) return;
++  ih.exitPictureObjectSelectionAndAfterEdit();
++  ih.enterInlineEditing(ref.sec, ref.ppi, ref.ci, created?.captionCharOffset ?? 4);
++}
++
++function applyTableCaption(
++  services: import('../types').CommandServices,
++  ih: InputHandler,
++  side: CaptionSide | null,
++  vert: CaptionVert | null,
++): void {
++  const tableRef = ih.isInTableObjectSelection() ? ih.getSelectedTableRef() : null;
++  let sec: number, ppi: number, ci: number;
++  if (tableRef) {
++    sec = tableRef.sec; ppi = tableRef.ppi; ci = tableRef.ci;
++  } else {
++    const pos = ih.getCursorPosition();
++    if (pos.parentParaIndex === undefined || pos.controlIndex === undefined) return;
++    if ((pos.cellPath?.length ?? 0) > 1) {
++      showToast({ message: '표 안의 표에는 아직 캡션을 넣을 수 없어요.' });
++      return;
++    }
++    sec = pos.sectionIndex; ppi = pos.parentParaIndex; ci = pos.controlIndex;
++  }
++  let props: any;
++  try { props = services.wasm.getTableProperties(sec, ppi, ci); } catch { return; }
++  if (!props) return;
++  const had = Boolean(props.hasCaption);
++  if (!side || !vert) {
++    if (!had) return;
++    ih.executeOperation({
++      kind: 'snapshot',
++      operationType: 'tableCaptionRemove',
++      operation: (wasm) => {
++        wasm.setTableProperties(sec, ppi, ci, { hasCaption: false });
++        return { sectionIndex: sec, paragraphIndex: ppi, charOffset: 0 };
++      },
++    });
++    return;
++  }
++  let charOffset = 3;
++  ih.executeOperation({
++    kind: 'snapshot',
++    operationType: had ? 'tableCaptionMove' : 'tableCaptionInsert',
++    operation: (wasm) => {
++      const result: any = wasm.setTableProperties(sec, ppi, ci, {
++        hasCaption: true,
++        captionDirection: TABLE_CAPTION_SIDE[side],
++        captionVertAlign: TABLE_CAPTION_VERT[vert],
++        ...(had || (side !== 'Left' && side !== 'Right') ? {} : { captionWidth: CAPTION_SIDE_WIDTH }),
++      });
++      charOffset = result?.captionCharOffset ?? 3;
++      return { sectionIndex: sec, paragraphIndex: ppi, charOffset: 0 };
++    },
++  });
++  if (had) return;
++  if (tableRef) ih.exitTableObjectSelection();
++  ih.enterTableCaptionEditing(sec, ppi, ci, charOffset);
++}
+diff --git a/rhwp-studio/src/command/commands/table.ts b/rhwp-studio/src/command/commands/table.ts
+index 50fe98929..52d35c050 100644
+--- a/rhwp-studio/src/command/commands/table.ts
++++ b/rhwp-studio/src/command/commands/table.ts
+@@ -32,12 +32,18 @@ function blockNestedTableStructureEdit(cellPath: readonly unknown[] | undefined)
+   showToast({ message: '표 안의 표에서는 줄·칸 추가/삭제, 셀 합치기·나누기, 표 지우기를 아직 할 수 없습니다.' });
+   return true;
+ }
++/**
++ * 표/셀 속성·셀 테두리/배경·계산식 창은 flat 좌표로 셀을 읽고 쓴다. 표 안의 표(글상자 안 표 포함)에서
++ * 열면 바깥 표 셀이 고쳐진다. 경로 API 로 옮기기 전까지는 열지 않고 알린다.
++ */
++function blockNestedTableDialog(cellPath: readonly unknown[] | undefined): boolean {
++  if ((cellPath?.length ?? 0) <= 1) return false;
++  showToast({ message: '표 안의 표에서는 표/셀 속성·셀 테두리·계산식 창을 아직 열 수 없어요.' });
++  return true;
++}
+ const inTable = (ctx: EditorContext) => ctx.inTable;
+ const inTableOrCellSelection = (ctx: EditorContext) => ctx.inTable || ctx.inCellSelectionMode;
+ const hasMultiCellSelection = (ctx: EditorContext) => ctx.hasMultiCellSelection;
+-// HWP/HWPX cannot persist independent per-row or per-column geometry. Keep
+-// commands that require that representation unavailable at command routing.
+-const localTableGeometryCanPersist = () => false;
+ 
+ type CellRange = { startRow: number; startCol: number; endRow: number; endCol: number };
+ type TableDimensions = { rowCount: number; colCount: number; cellCount: number };
+@@ -210,6 +216,7 @@ function openFormulaDialog(services: Parameters<CommandDef['execute']>[0]): void
+   if (!ih) return;
+   const pos = ih.getCursorPosition();
+   if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++  if (blockNestedTableDialog(pos.cellPath)) return;
+   const dialog = new FormulaDialog(services.wasm, services.eventBus, {
+     sec: pos.sectionIndex,
+     ppi: pos.parentParaIndex,
+@@ -366,6 +373,7 @@ export const tableCommands: CommandDef[] = [
+       if (ih.isInTableObjectSelection()) {
+         const ref = ih.getSelectedTableRef();
+         if (!ref) return;
++        if (blockNestedTableDialog(ref.cellPath)) return;
+         const tableCtx = { sec: ref.sec, ppi: ref.ppi, ci: ref.ci };
+         const dialog = new TableCellPropsDialog(services.wasm, services.eventBus, tableCtx, 0, 'table', services);
+         dialog.show();
+@@ -374,6 +382,7 @@ export const tableCommands: CommandDef[] = [
+ 
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableDialog(pos.cellPath)) return;
+       const tableCtx = { sec: pos.sectionIndex, ppi: pos.parentParaIndex, ci: pos.controlIndex };
+       const dialog = new TableCellPropsDialog(services.wasm, services.eventBus, tableCtx, pos.cellIndex, 'cell', services);
+       dialog.show();
+@@ -389,6 +398,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableDialog(pos.cellPath)) return;
+       const tableCtx = { sec: pos.sectionIndex, ppi: pos.parentParaIndex, ci: pos.controlIndex };
+       const selectionRange = ih.isInCellSelectionMode?.() ? ih.getSelectedCellRange?.() ?? null : null;
+       const dialog = new CellBorderBgDialog(
+@@ -414,6 +424,7 @@ export const tableCommands: CommandDef[] = [
+       if (!ih.hasMultiCellSelection()) return;
+       const pos = ih.getCursorPosition();
+       if (pos.parentParaIndex === undefined || pos.controlIndex === undefined || pos.cellIndex === undefined) return;
++      if (blockNestedTableDialog(pos.cellPath)) return;
+       const tableCtx = { sec: pos.sectionIndex, ppi: pos.parentParaIndex, ci: pos.controlIndex };
+       const dialog = new CellBorderBgDialog(
+         services.wasm,
+@@ -967,15 +978,15 @@ export const tableCommands: CommandDef[] = [
+     id: 'table:cell-height-equal',
+     label: t('command.table.cellHeightEqual.label'),
+     shortcutLabel: 'H',
+-    canExecute: localTableGeometryCanPersist,
+-    execute() {},
++    canExecute: (ctx) => ctx.inCellSelectionMode,
++    execute(services) { equalizeSelectedCells(services, 'height'); },
+   },
+   {
+     id: 'table:cell-width-equal',
+     label: t('command.table.cellWidthEqual.label'),
+     shortcutLabel: 'W',
+-    canExecute: localTableGeometryCanPersist,
+-    execute() {},
++    canExecute: (ctx) => ctx.inCellSelectionMode,
++    execute(services) { equalizeSelectedCells(services, 'width'); },
+   },
+   {
+     id: 'table:formula',
+@@ -1133,3 +1144,30 @@ export const tableCommands: CommandDef[] = [
+     },
+   },
+ ];
++
++/**
++ * 한글 「셀 높이를 같게(H)」·「셀 너비를 같게(W)」: F5 블록의 줄(칸)들을 합은 그대로 두고 고르게 나눈다.
++ * 칸 경계는 표 전체 격자라서 블록이 걸친 칸 전체가 같이 바뀐다. 중첩 표도 셀 경로로 바로 고친다.
++ */
++function equalizeSelectedCells(services: CommandServices, axis: 'width' | 'height'): void {
++  const ih = services.getInputHandler();
++  if (!ih || !ih.isInCellSelectionMode()) return;
++  const tableContext = ih.getCellTableContext();
++  const range = ih.getSelectedCellRange();
++  if (!tableContext || !range) return;
++  const pos = ih.getCursorPosition();
++  const cellPath = tableContext.cellPath?.length
++    ? tableContext.cellPath
++    : [{ controlIndex: tableContext.ci, cellIndex: pos.cellIndex ?? 0, cellParaIndex: 0 }];
++  safeTableOp(() => ih.executeOperation({
++    kind: 'snapshot',
++    operationType: axis === 'width' ? 'tableCellWidthEqual' : 'tableCellHeightEqual',
++    operation: (wasm) => {
++      const result = JSON.parse(wasm.equalizeTableCells(
++        tableContext.sec, tableContext.ppi, JSON.stringify(cellPath),
++        range.startRow, range.startCol, range.endRow, range.endCol, axis,
++      ));
++      return result.changed === false ? null : pos;
++    },
++  }), axis === 'width' ? '셀 너비를 같게' : '셀 높이를 같게');
++}
+diff --git a/rhwp-studio/src/command/contextual-shortcut.ts b/rhwp-studio/src/command/contextual-shortcut.ts
+index c2d3323e9..4819ec5a3 100644
+--- a/rhwp-studio/src/command/contextual-shortcut.ts
++++ b/rhwp-studio/src/command/contextual-shortcut.ts
+@@ -10,7 +10,7 @@ export type ContextualShortcutResolution =
+   | null;
+ 
+ export type CellBlockLetterShortcutResolution =
+-  | { kind: 'dispatch'; commandId: 'table:cell-split' | 'table:cell-merge' }
++  | { kind: 'dispatch'; commandId: 'table:cell-split' | 'table:cell-merge' | 'table:cell-height-equal' | 'table:cell-width-equal' }
+   | null;
+ 
+ type CellBlockLetterImeGuardState = 'idle' | 'armed' | 'composition';
+@@ -106,5 +106,12 @@ export function resolveCellBlockLetterShortcut(
+   if (key === 'm' || event.key === 'ㅡ' || code === 'keym') {
+     return { kind: 'dispatch', commandId: 'table:cell-merge' };
+   }
++  // 한글: 셀 블록에서 H = 셀 높이를 같게, W = 셀 너비를 같게.
++  if (key === 'h' || event.key === 'ㅗ' || code === 'keyh') {
++    return { kind: 'dispatch', commandId: 'table:cell-height-equal' };
++  }
++  if (key === 'w' || event.key === 'ㅈ' || code === 'keyw') {
++    return { kind: 'dispatch', commandId: 'table:cell-width-equal' };
++  }
+   return null;
+ }
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 85e43114b..4d7b6ba6c 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -34,6 +34,8 @@ export const MUTATING_METHODS: readonly string[] = [
+   'createTable', 'createTableEx', 'deleteTableControl', 'insertTableRow', 'splitTable', 'mergeTableWithNext',
+   'insertTableColumn', 'deleteTableRow', 'deleteTableColumn', 'mergeTableCells',
+   'splitTableCell', 'splitTableCellInto', 'splitTableCellsInRange', 'resizeTableCells',
++  'equalizeTableCells', // 한글 셀 너비/높이를 같게
++  'insertPageNumberField', 'insertParagraphBand',
+   'resizeTableCellsByPath', // [#7189] 중첩 표 셀 크기 조절 — 평면 resizeTableCells 의 경로 변형
+   'moveTableOffset', 'setTableProperties', 'setCellProperties', 'setCellZoneProperties',
+   'applyCellBorderFillIds', 'removeBorderFillTails',
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index a6f2c7aab..b65527832 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -2224,6 +2224,21 @@ export class WasmBridge {
+     );
+   }
+ 
++  /** 한글 「필드 넣기 → 현재 쪽 번호·전체 쪽수」를 본문 캐럿 자리에 넣는다. */
++  insertPageNumberField(sec: number, para: number, charOffset: number, kind: 'page' | 'total'): { ok: boolean; charOffset?: number; reason?: string } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).insertPageNumberField(sec, para, charOffset, kind));
++  }
++
++  /** 한글 「셀 너비/높이를 같게」 — 고른 칸(줄)을 합은 두고 고르게 나눈다. 결과 JSON 문자열을 그대로 준다. */
++  equalizeTableCells(
++    sec: number, parentPara: number, pathJson: string,
++    startRow: number, startCol: number, endRow: number, endCol: number, axis: 'width' | 'height',
++  ): string {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return (this.doc as any).equalizeTableCells(sec, parentPara, pathJson, startRow, startCol, endRow, endCol, axis);
++  }
++
+   moveTableOffset(sec: number, parentPara: number, controlIdx: number, deltaH: number, deltaV: number): { ok: boolean; ppi: number; ci: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.moveTableOffset(sec, parentPara, controlIdx, deltaH, deltaV));
+@@ -2650,6 +2665,12 @@ export class WasmBridge {
+     );
+   }
+ 
++  /** 한글 「문단 띠」 — 캐럿 문단에 본문 폭 검정 띠(1mm)를 넣는다. */
++  insertParagraphBand(sec: number, para: number, charOffset: number): { ok: boolean; paraIdx: number; controlIdx: number } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).insertParagraphBand(sec, para, charOffset));
++  }
++
+   createShapeControl(params: Record<string, unknown>): { ok: boolean; paraIdx: number; controlIdx: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse(this.doc.createShapeControl(JSON.stringify(params)));
+diff --git a/rhwp-studio/src/engine/input-handler-keyboard.ts b/rhwp-studio/src/engine/input-handler-keyboard.ts
+index 409155a00..2037fd11c 100755
+--- a/rhwp-studio/src/engine/input-handler-keyboard.ts
++++ b/rhwp-studio/src/engine/input-handler-keyboard.ts
+@@ -522,6 +522,8 @@ const chordMapK: Record<string, string> = {
+   ㅠ: 'insert:bookmark', // 한글 IME 상태
+   n: 'format:para-num-shape',
+   ㅜ: 'format:para-num-shape', // 한글 IME 상태
++  d: 'insert:date-time-string', // 한글 날짜/시간 문자열
++  ㅇ: 'insert:date-time-string', // 한글 IME 상태
+ };
+ 
+ /** 코드 단축키 → 커맨드 ID 매핑 (Ctrl+M,? 형태)
+@@ -536,10 +538,14 @@ const chordMapM: Record<string, string> = {
+   ㅋ: 'table:attach', // 한글 IME
+   n: 'insert:footnote',
+   ㅜ: 'insert:footnote', // 한글 IME
+-  s: 'page:hide',
+-  ㄴ: 'page:hide', // 한글 IME
++  s: 'page:hide-dialog', // 한글 감추기 창(6가지)
++  ㄴ: 'page:hide-dialog', // 한글 IME
++  f: 'table:formula', // 한컴 Ctrl+N,F 계산식
++  ㄹ: 'table:formula', // 한글 IME
+   m: 'insert:equation',
+   ㅡ: 'insert:equation', // 한글 IME
++  l: 'insert:para-band', // 한컴 Ctrl+N,L 문단 띠
++  ㅣ: 'insert:para-band', // 한글 IME
+ };
+ 
+ /** 코드 단축키 → 커맨드 ID 매핑 (Alt+V,? 형태 — 보기 메뉴) */
+diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
+index 8430bdf63..151794d39 100644
+--- a/rhwp-studio/src/engine/input-handler.ts
++++ b/rhwp-studio/src/engine/input-handler.ts
+@@ -6122,6 +6122,21 @@ export class InputHandler {
+     }
+   }
+ 
++  /** 한글 「개요 적용/해제」: 개요가 아니면 1수준 개요로, 개요면 해제. */
++  toggleOutline(): void {
++    try {
++      const props = this.getParaProperties();
++      if (props.headType === 'Outline') {
++        this.applyParaFormat({ headType: 'None' } as Partial<import('@/core/types').ParaProperties>);
++      } else {
++        this.applyParaFormat({ headType: 'Outline', paraLevel: 0 } as Partial<import('@/core/types').ParaProperties>);
++      }
++      this.focusTextarea();
++    } catch (err) {
++      console.warn('[InputHandler] toggleOutline 실패:', err);
++    }
++  }
++
+   /** 글머리표 토글: None→Bullet, Bullet→None */
+   toggleBullet(bulletChar = '●'): void {
+     try {
+diff --git a/rhwp-studio/tests/issue-4135-contextual-shortcut.test.ts b/rhwp-studio/tests/issue-4135-contextual-shortcut.test.ts
+index 3f638fa0f..4f117eee7 100644
+--- a/rhwp-studio/tests/issue-4135-contextual-shortcut.test.ts
++++ b/rhwp-studio/tests/issue-4135-contextual-shortcut.test.ts
+@@ -9,7 +9,7 @@ const { resolveCellBlockCtrlShiftS } = contextualShortcut;
+ type CellBlockLetterResolver = (
+   event: KeyboardEvent,
+   context: { inCellSelectionMode: boolean },
+-) => { kind: 'dispatch'; commandId: 'table:cell-split' | 'table:cell-merge' } | null;
++) => { kind: 'dispatch'; commandId: 'table:cell-split' | 'table:cell-merge' | 'table:cell-height-equal' | 'table:cell-width-equal' } | null;
+ 
+ type CellBlockLetterImeGuardLike = {
+   arm: (event: KeyboardEvent) => boolean;
+@@ -171,6 +171,13 @@ test('Recovery R1: 영문·한글·Process KeyM은 모두 셀 합치기를 소
+   }
+ });
+ 
++test('셀 블록의 H/W 는 한글처럼 셀 높이·너비를 같게 한다(한글 IME 포함)', () => {
++  const resolve = cellBlockLetterResolver();
++  assert.deepEqual(resolve(key({ key: 'h', code: 'KeyH' }), { inCellSelectionMode: true }), { kind: 'dispatch', commandId: 'table:cell-height-equal' });
++  assert.deepEqual(resolve(key({ key: 'ㅈ', code: 'KeyW' }), { inCellSelectionMode: true }), { kind: 'dispatch', commandId: 'table:cell-width-equal' });
++  assert.equal(resolve(key({ key: 'h', code: 'KeyH' }), { inCellSelectionMode: false }), null);
++});
++
+ test('Recovery R1: 셀 블록 밖이거나 Ctrl/Meta/Alt 수정자가 있으면 S/M을 소유하지 않는다', () => {
+   const resolve = cellBlockLetterResolver();
+   assert.equal(resolve(key({ key: 's', code: 'KeyS' }), { inCellSelectionMode: false }), null);
+diff --git a/rhwp-studio/tests/mutation-routing-guard.test.ts b/rhwp-studio/tests/mutation-routing-guard.test.ts
+index 05f9c6bec..df476d8dd 100644
+--- a/rhwp-studio/tests/mutation-routing-guard.test.ts
++++ b/rhwp-studio/tests/mutation-routing-guard.test.ts
+@@ -56,7 +56,7 @@ function bridgePublicMethods(): string[] {
+ // 문서 변경을 시사하는 동사 접두어. MUTATING_METHODS 의 모든 이름을 커버해야
+ // 하며(아래 자기정합 단언이 강제), 그래야 새 브리지 뮤테이터가 drift 에 걸린다.
+ // find* 는 쿼리(findNextEditableControl 등)가 많아 findOrCreate 로 좁힌다.
+-const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|renameBookmark)/;
++const MUTATING_VERB = /^(insert|delete|create|apply|add|remove|move|resize|merge|split|update|toggle|replace|paste|assign|group|ungroup|change|clear|evaluate|transpose|equalize|promote|ensure|findOrCreate|reflow|setPage|setSection|setColumn|setCell|setTable|setPicture|setShape|setEquation|setNote|setChar|setPara|setField|setForm|setNumbering|setHeaderFooter|setActiveField|renameBookmark)/;
+ 
+ test('MUTATING_VERB 는 MUTATING_METHODS 전 항목을 커버한다(drift 사각 방지)', () => {
+   // 목록에 있으나 동사 패턴에 안 걸리는 이름이 있으면, 그 계열의 신규 브리지
+@@ -271,7 +271,7 @@ const BASELINE: Readonly<Record<string, number>> = {
+   'src/engine/input-handler-keyboard.ts': 21,
+   'src/engine/input-handler-mouse.ts': 3,
+   'src/engine/input-handler-picture.ts': 11,
+-  'src/engine/input-handler-table.ts': 10, // +1 [#7189]: 중첩 표 확정이 resizeTableCellsByPath 로 갈라진다 (같은 executeOperation snapshot 안, 평면 호출과 배타) / -2: 한컴 3모드 셀 크기 조절의 직접 WASM 호출을 executeOperation snapshot 경로로 이관 (undo 기록됨) / +2 [#7442]: applyKeyboardResize·resizeTableProportional 도 중첩 ctx 에서 resizeTableCellsByPath 로 갈라진다 (같은 snapshot 안, 평면 호출과 배타)
++  'src/engine/input-handler-table.ts': 11, // +1 K-Doc 0013: 셀 클릭 그림은 insertPictureInCellParagraph 로 갈라진다(같은 배치 경로, insertPicture 와 배타) / +1 [#7189]: 중첩 표 확정이 resizeTableCellsByPath 로 갈라진다 (같은 executeOperation snapshot 안, 평면 호출과 배타) / -2: 한컴 3모드 셀 크기 조절의 직접 WASM 호출을 executeOperation snapshot 경로로 이관 (undo 기록됨) / +2 [#7442]: applyKeyboardResize·resizeTableProportional 도 중첩 ctx 에서 resizeTableCellsByPath 로 갈라진다 (같은 snapshot 안, 평면 호출과 배타)
+   'src/engine/input-handler-hyperlink-delete.ts': 3, // #6963: removeHyperlink + 본문/셀 deleteText는 모두 deleteHyperlink snapshot 안에서 실행. 실제 WASM runner가 원자 복구·undo/redo를 검증한다.
+   'src/engine/input-handler-text.ts': 13, // 개체 뒤 조합은 논리 삽입·텍스트 삭제 후 완료 명령으로 기록한다.
+   // ── hwpctl — 의도적 미라우팅 (#3648 정책 판정, 2026-07-31) ──
+diff --git a/rhwp-studio/tests/table-cell-width-equal-1491.test.ts b/rhwp-studio/tests/table-cell-width-equal-1491.test.ts
+index 1deaaf9c1..151fad16e 100644
+--- a/rhwp-studio/tests/table-cell-width-equal-1491.test.ts
++++ b/rhwp-studio/tests/table-cell-width-equal-1491.test.ts
+@@ -19,15 +19,19 @@ function commandBlock(commandId: string): string {
+   return tableCmd.slice(start, end);
+ }
+ 
++// 한글 「셀 높이/너비를 같게」: 표 전체 격자의 칸(줄)을 고르게 나누므로 HWP/HWPX 에 그대로 저장된다.
++// 행·열마다 다른 경계(localResize)는 여전히 만들지 않는다.
+ for (const commandId of ['table:cell-width-equal', 'table:cell-height-equal']) {
+-  test(`${commandId}은 저장 불가능한 projection과 blocking UI를 만들지 않는다`, () => {
++  test(`${commandId}은 F5 블록에서 엔진 균등화로 저장 가능한 격자만 바꾼다`, () => {
+     const block = commandBlock(commandId);
+-    assert.match(block, /canExecute:\s*localTableGeometryCanPersist/);
+-    assert.doesNotMatch(block, /showToast|localResize|renderWidth|renderHeight|resizeTableCells/);
++    assert.match(block, /canExecute:\s*\(ctx\) => ctx\.inCellSelectionMode/);
++    assert.match(block, /equalizeSelectedCells\(services, '(width|height)'\)/);
++    assert.doesNotMatch(block, /localResize|renderWidth|renderHeight/);
+   });
+ }
+ 
+-test('균등화 command routing은 포맷이 저장할 수 없는 geometry를 비활성화한다', () => {
++test('균등화는 엔진 equalizeTableCells 하나로 스냅샷 기록한다', () => {
+   const tableCmd = source('src/command/commands/table.ts');
+-  assert.match(tableCmd, /const localTableGeometryCanPersist = \(\) => false/);
++  assert.match(tableCmd, /wasm\.equalizeTableCells\(/);
++  assert.doesNotMatch(tableCmd, /localTableGeometryCanPersist/);
+ });
+diff --git a/src/document_core/commands/object_ops/shape.rs b/src/document_core/commands/object_ops/shape.rs
+index da292b232..a2518dc35 100644
+--- a/src/document_core/commands/object_ops/shape.rs
++++ b/src/document_core/commands/object_ops/shape.rs
+@@ -1024,6 +1024,58 @@ impl DocumentCore {
+         });
+         Ok("{\"ok\":true}".to_string())
+     }
++    /// 한글 「입력 → 문단 띠」: 문단 왼쪽 여백부터 오른쪽 여백까지 두께 1mm, 면 검정, 선 없음 사각형.
++    /// 문단 기준 위치·위아래 배치로 넣는다(도움말 insert/line.htm 의 처음 값).
++    pub fn insert_paragraph_band_native(
++        &mut self,
++        section_idx: usize,
++        para_idx: usize,
++        char_offset: usize,
++    ) -> Result<String, HwpError> {
++        let section = self
++            .document
++            .sections
++            .get(section_idx)
++            .ok_or_else(|| HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx)))?;
++        let pd = &section.section_def.page_def;
++        let width = (pd.width as i64 - pd.margin_left as i64 - pd.margin_right as i64 - pd.margin_gutter as i64)
++            .max(2834) as u32;
++        let created = self.create_shape_control_native(
++            section_idx,
++            para_idx,
++            char_offset,
++            width,
++            283,
++            0,
++            0,
++            false,
++            "TopAndBottom",
++            "rectangle",
++            false,
++            false,
++            &[],
++        )?;
++        let parse = |key: &str| -> Option<usize> {
++            created
++                .split(&format!("\"{}\":", key))
++                .nth(1)?
++                .split(|c: char| !c.is_ascii_digit())
++                .next()?
++                .parse()
++                .ok()
++        };
++        let (Some(pi), Some(ci)) = (parse("paraIdx"), parse("controlIdx")) else {
++            return Ok(created);
++        };
++        self.set_shape_properties_native(
++            section_idx,
++            pi,
++            ci,
++            r#"{"fillType":"solid","fillBgColor":0,"lineType":0,"borderWidth":0}"#,
++        )?;
++        Ok(created)
++    }
++
+     /// 커서 위치에 글상자(Rectangle + TextBox)를 삽입한다 (네이티브).
+     pub fn create_shape_control_native(
+         &mut self,
+@@ -3108,3 +3160,32 @@ mod char_shape_inherit_tests {
+         );
+     }
+ }
++
++#[cfg(test)]
++mod paragraph_band_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    #[test]
++    fn paragraph_band_is_a_black_borderless_bar_across_the_body() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        let r: serde_json::Value =
++            serde_json::from_str(&core.insert_paragraph_band_native(0, 0, 0).expect("band")).unwrap();
++        let pi = r["paraIdx"].as_u64().unwrap() as usize;
++        let ci = r["controlIdx"].as_u64().unwrap() as usize;
++        let props: serde_json::Value =
++            serde_json::from_str(&core.get_shape_properties_native(0, pi, ci).expect("props")).unwrap();
++        assert_eq!(props["height"], 283, "{props}");
++        assert_eq!(props["fillType"], "solid", "{props}");
++        assert_eq!(props["fillBgColor"], 0, "{props}");
++        assert_eq!(props["lineType"], 0, "{props}");
++        let pd = &core.document.sections[0].section_def.page_def;
++        let body = pd.width - pd.margin_left - pd.margin_right - pd.margin_gutter;
++        assert_eq!(props["width"].as_u64().unwrap() as u32, body);
++        assert!(matches!(
++            core.document.sections[0].paragraphs[pi].controls[ci],
++            Control::Shape(_)
++        ));
++    }
++}
+diff --git a/src/document_core/commands/table_ops.rs b/src/document_core/commands/table_ops.rs
+index 0489e032e..e49c973ce 100644
+--- a/src/document_core/commands/table_ops.rs
++++ b/src/document_core/commands/table_ops.rs
+@@ -2610,6 +2610,82 @@ impl DocumentCore {
+         Ok("{\"ok\":true}".to_string())
+     }
+ 
++    /// 한글 「셀 너비를 같게(W)」·「셀 높이를 같게(H)」.
++    ///
++    /// 고른 칸(`start_col..=end_col`)의 폭 합, 또는 고른 줄(`start_row..=end_row`)의 높이 합을
++    /// 그대로 두고 고르게 나눈다. 표 전체 크기는 바뀌지 않는다. 칸 경계는 표 전체에 걸친
++    /// 격자라서 고른 칸의 모든 줄이 함께 바뀐다(줄도 같다). `path` 마지막 항목이 표를 가리킨다.
++    #[allow(clippy::too_many_arguments)]
++    pub fn equalize_table_cells_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        path: &[(usize, usize, usize)],
++        start_row: usize,
++        start_col: usize,
++        end_row: usize,
++        end_col: usize,
++        width: bool,
++    ) -> Result<String, HwpError> {
++        let Some(&(control_idx, _, _)) = path.last() else {
++            return Err(HwpError::RenderError("경로가 비어있습니다".to_string()));
++        };
++        let table = self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
++        let (lo, hi, count) = if width {
++            (start_col.min(end_col), start_col.max(end_col), table.col_count as usize)
++        } else {
++            (start_row.min(end_row), start_row.max(end_row), table.row_count as usize)
++        };
++        if hi >= count {
++            return Err(HwpError::RenderError(format!("범위 {}..={} 가 표 크기 {} 를 넘습니다", lo, hi, count)));
++        }
++        let mut sizes = if width { table.get_column_widths() } else { table.get_row_heights() };
++        let n = (hi - lo + 1) as u32;
++        let total: u32 = sizes[lo..=hi].iter().sum();
++        if n < 2 || sizes[lo..=hi].iter().all(|&v| v == sizes[lo]) {
++            return Ok("{\"ok\":true,\"changed\":false}".to_string());
++        }
++        let each = total / n;
++        for (k, v) in sizes[lo..=hi].iter_mut().enumerate() {
++            // 나머지는 마지막 칸(줄)에 얹어 합을 지킨다.
++            *v = if k as u32 == n - 1 { total - each * (n - 1) } else { each };
++        }
++        if width {
++            table.set_column_widths(&sizes).map_err(HwpError::RenderError)?;
++        } else {
++            for cell in &mut table.cells {
++                let r = cell.row as usize;
++                if r >= sizes.len() {
++                    continue;
++                }
++                let end = (r + cell.row_span.max(1) as usize).min(sizes.len());
++                cell.height = sizes[r..end].iter().sum();
++            }
++            table.update_ctrl_dimensions();
++            table.rebuild_grid();
++        }
++        let reflow: Vec<(usize, usize)> = table
++            .cells
++            .iter()
++            .enumerate()
++            .map(|(i, c)| (i, c.paragraphs.len()))
++            .collect();
++
++        let depth = path.len() - 1;
++        let mut inner_path: Vec<(usize, usize, usize)> = path[..depth].to_vec();
++        inner_path.push((control_idx, 0, 0));
++        for (cell_idx, para_count) in reflow {
++            for cell_para_idx in 0..para_count {
++                inner_path[depth] = (control_idx, cell_idx, cell_para_idx);
++                self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, &inner_path, cell_para_idx);
++            }
++        }
++        self.document.sections[section_idx].raw_stream = None;
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++        Ok("{\"ok\":true,\"changed\":true}".to_string())
++    }
++
+     /// 표의 열별 폭(HWPUNIT)을 절대값으로 설정한다 (네이티브).
+     ///
+     /// `widths.len()` 은 표의 열 수와 같아야 한다. `insert_table_column` 과 달리
+@@ -4738,3 +4814,48 @@ mod neighbor_border_raw_data_tests {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod equalize_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::Control;
++
++    fn table_of(core: &DocumentCore, para: usize, ctrl: usize) -> &crate::model::table::Table {
++        match &core.document.sections[0].paragraphs[para].controls[ctrl] {
++            Control::Table(t) => t,
++            _ => panic!("not a table"),
++        }
++    }
++
++    #[test]
++    fn equalize_cell_widths_and_heights_keeps_the_table_size() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank document");
++        let created: serde_json::Value =
++            serde_json::from_str(&core.create_table_native(0, 0, 0, 2, 3).expect("table")).expect("json");
++        let para = created["paraIdx"].as_u64().unwrap() as usize;
++        let ctrl = created["controlIdx"].as_u64().unwrap() as usize;
++        let path = [(ctrl, 0, 0)];
++
++        // 첫 칸을 넓히고 둘째 칸을 줄여 칸 폭을 어긋나게 만든다.
++        core.resize_table_cells_native(0, para, ctrl, r#"[{"cellIdx":0,"widthDelta":3000},{"cellIdx":3,"widthDelta":3000},{"cellIdx":1,"widthDelta":-3000},{"cellIdx":4,"widthDelta":-3000}]"#)
++            .expect("resize");
++        let before = table_of(&core, para, ctrl).get_column_widths();
++        assert_ne!(before[0], before[1]);
++        let total_before: u32 = before.iter().sum();
++
++        core.equalize_table_cells_native(0, para, &path, 0, 0, 1, 2, true).expect("equal widths");
++        let after = table_of(&core, para, ctrl).get_column_widths();
++        assert_eq!(after.iter().sum::<u32>(), total_before, "표 폭은 그대로");
++        assert!(after.iter().max().unwrap() - after.iter().min().unwrap() <= 2, "{after:?}");
++
++        core.resize_table_cells_native(0, para, ctrl, r#"[{"cellIdx":0,"heightDelta":2000},{"cellIdx":1,"heightDelta":2000},{"cellIdx":2,"heightDelta":2000}]"#)
++            .expect("resize rows");
++        let rows_before = table_of(&core, para, ctrl).get_row_heights();
++        assert_ne!(rows_before[0], rows_before[1]);
++        core.equalize_table_cells_native(0, para, &path, 0, 0, 1, 0, false).expect("equal heights");
++        let rows_after = table_of(&core, para, ctrl).get_row_heights();
++        assert_eq!(rows_after.iter().sum::<u32>(), rows_before.iter().sum::<u32>());
++        assert!(rows_after[0].abs_diff(rows_after[1]) <= 1, "{rows_after:?}");
++    }
++}
+diff --git a/src/document_core/queries/hwpctrl_sets.rs b/src/document_core/queries/hwpctrl_sets.rs
+index cb7fa22a3..a18c5c08a 100644
+--- a/src/document_core/queries/hwpctrl_sets.rs
++++ b/src/document_core/queries/hwpctrl_sets.rs
+@@ -8,7 +8,7 @@
+ use crate::document_core::queries::field_query::{
+     caret_stops, cell_path_to_list, char_idx_at_stream_pos, cursor_paragraph, json_escape,
+     leading_anchor_pos, root_para_count, root_para_location, root_para_of, select_start_pos,
+-    shape_lists, stream_len, word_end_from, word_starts, ListEntry, EXTENDED_CTRL_UNITS,
++    shape_lists, stream_len, stream_pos, word_end_from, word_starts, ListEntry, EXTENDED_CTRL_UNITS,
+     ROOT_LIST_ID,
+ };
+ use crate::document_core::DocumentCore;
+@@ -2003,6 +2003,37 @@ impl DocumentCore {
+         Ok(r#"{"ok":true}"#.to_string())
+     }
+ 
++    /// 한글 「입력 → 필드 넣기」의 현재 쪽 번호·전체 쪽수를 편집기 캐럿(구역·문단·글자 번호)
++    /// 자리에 끼운다. `kind` 는 `page`·`total`. 캐럿은 넣은 번호 바로 뒤(`charOffset`)로 간다.
++    pub fn insert_page_number_field_native(
++        &mut self,
++        section_idx: usize,
++        para_idx: usize,
++        char_offset: usize,
++        kind: &str,
++    ) -> Result<String, HwpError> {
++        let before: usize = self
++            .document
++            .sections
++            .iter()
++            .take(section_idx)
++            .map(|s| s.paragraphs.len())
++            .sum();
++        let para = self
++            .document
++            .sections
++            .get(section_idx)
++            .and_then(|s| s.paragraphs.get(para_idx))
++            .ok_or_else(|| HwpError::InvalidField(format!("문단 {}:{} 없음", section_idx, para_idx)))?;
++        let char_offset = char_offset.min(para.text.chars().count());
++        let pos = stream_pos(para, char_offset);
++        let result = self.insert_auto_number_at_cursor(ROOT_LIST_ID, before + para_idx, pos, kind)?;
++        if result.contains("\"ok\":false") {
++            return Ok(result);
++        }
++        Ok(format!("{{\"ok\":true,\"charOffset\":{}}}", char_offset + 1))
++    }
++
+     /// 구역마다 **첫 본문 문단 번호** — `MoveSectionUp`·`MoveSectionDown` 이 딛는 자리다.
+     ///
+     /// 본문 리스트는 구역을 가로질러 이어지므로([`root_para_location`]) 구역 경계는 이 표로만
+@@ -2446,6 +2477,37 @@ impl DocumentCore {
+     }
+ }
+ 
++#[cfg(test)]
++mod page_number_field_tests {
++    use crate::document_core::DocumentCore;
++    use crate::model::control::{AutoNumberType, Control};
++
++    #[test]
++    fn page_number_and_total_go_into_body_text_at_the_caret() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank");
++        core.insert_text_native(0, 0, 0, "쪽 / ").expect("text");
++        let r: serde_json::Value =
++            serde_json::from_str(&core.insert_page_number_field_native(0, 0, 2, "page").unwrap()).unwrap();
++        assert_eq!(r["ok"], true, "{r}");
++        assert_eq!(r["charOffset"], 3);
++        let end = core.document.sections[0].paragraphs[0].text.chars().count();
++        let r: serde_json::Value =
++            serde_json::from_str(&core.insert_page_number_field_native(0, 0, end, "total").unwrap()).unwrap();
++        assert_eq!(r["ok"], true, "{r}");
++
++        let kinds: Vec<AutoNumberType> = core.document.sections[0].paragraphs[0]
++            .controls
++            .iter()
++            .filter_map(|c| match c {
++                Control::AutoNumber(a) => Some(a.number_type),
++                _ => None,
++            })
++            .collect();
++        assert_eq!(kinds, vec![AutoNumberType::Page, AutoNumberType::TotalPage]);
++    }
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/src/wasm_api.rs b/src/wasm_api.rs
+index 06836eebb..5674e3bd6 100644
+--- a/src/wasm_api.rs
++++ b/src/wasm_api.rs
+@@ -3741,6 +3741,35 @@ impl HwpDocument {
+     ///
+     /// `cell_path_json`: `[{"controlIndex":0,"cellIndex":0,"cellParaIndex":9},...]`
+     /// 마지막 항목이 조절할 표를 가리킨다. 깊이 1 이면 평면 API 와 같은 경로로 처리한다.
++    /// 한글 「셀 너비를 같게」·「셀 높이를 같게」 — 고른 칸(줄)의 폭(높이) 합을 고르게 나눈다.
++    /// `cell_path_json` 마지막 항목이 표를 가리킨다. `axis`: "width" 또는 "height".
++    #[wasm_bindgen(js_name = equalizeTableCells)]
++    #[allow(clippy::too_many_arguments)]
++    pub fn equalize_table_cells(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        start_row: u32,
++        start_col: u32,
++        end_row: u32,
++        end_col: u32,
++        axis: &str,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.equalize_table_cells_native(
++            section_idx as usize,
++            parent_para_idx as usize,
++            &path,
++            start_row as usize,
++            start_col as usize,
++            end_row as usize,
++            end_col as usize,
++            axis != "height",
++        )
++        .map_err(|e| e.into())
++    }
++
+     #[wasm_bindgen(js_name = resizeTableCellsByPath)]
+     pub fn resize_table_cells_by_path(
+         &mut self,
+@@ -4806,6 +4835,18 @@ impl HwpDocument {
+     /// json: `{"sectionIdx":N,"paraIdx":N,"charOffset":N,"width":N,"height":N,
+     ///         "horzOffset":N,"vertOffset":N,"treatAsChar":bool,"textWrap":"Square"}`
+     /// 반환: JSON `{"ok":true,"paraIdx":<N>,"controlIdx":0}`
++    /// 한글 「입력 → 문단 띠」 — 캐럿 문단에 본문 폭 1mm 검정 띠를 넣는다.
++    #[wasm_bindgen(js_name = insertParagraphBand)]
++    pub fn insert_paragraph_band(
++        &mut self,
++        section_idx: u32,
++        para_idx: u32,
++        char_offset: u32,
++    ) -> Result<String, JsValue> {
++        self.insert_paragraph_band_native(section_idx as usize, para_idx as usize, char_offset as usize)
++            .map_err(|e| e.into())
++    }
++
+     #[wasm_bindgen(js_name = createShapeControl)]
+     pub fn create_shape_control(&mut self, json: &str) -> Result<String, JsValue> {
+         let sec = json_u32(json, "sectionIdx").unwrap_or(0) as usize;
+@@ -6414,6 +6455,25 @@ impl HwpDocument {
+             .map_err(|e| e.into())
+     }
+ 
++    /// 한글 「필드 넣기 → 현재 쪽 번호·전체 쪽수」 — 편집기 캐럿 좌표로 본문에 끼운다.
++    /// `kind`: `page` 또는 `total`. 반환 `{"ok":true,"charOffset":N}` (넣은 번호 뒤).
++    #[wasm_bindgen(js_name = insertPageNumberField)]
++    pub fn insert_page_number_field(
++        &mut self,
++        section_idx: u32,
++        para_idx: u32,
++        char_offset: u32,
++        kind: &str,
++    ) -> Result<String, JsValue> {
++        self.insert_page_number_field_native(
++            section_idx as usize,
++            para_idx as usize,
++            char_offset as usize,
++            kind,
++        )
++        .map_err(|e| e.into())
++    }
++
+     /// 문서 글 전체 — `GetTextFile("TEXT")`. CP949 수치 참조를 적용한 JSON 문자열이다.
+     #[wasm_bindgen(js_name = getTextFileText)]
+     pub fn get_text_file_text(&self) -> String {
+-- 
+2.50.1 (Apple Git-155)
+

@@ -12,6 +12,7 @@ import {
 import { toolbarLabelsCommand } from '../host/toolbar-labels';
 import { editCommands } from './commands/edit';
 import { fileCommands } from './commands/file';
+import { hancomCommands } from './commands/hancom';
 import { assertUniqueCommandIds, replaceUpstreamCommands } from './replace-upstream-commands';
 import { defaultShortcuts } from './shortcut-map';
 
@@ -25,6 +26,7 @@ const productionCommandGroups = [
   tableCommands,
   pageCommands,
   toolCommands,
+  hancomCommands,
 ] as const;
 const productionCommandIds = new Set(productionCommandGroups.flat().map(({ id }) => id));
 
@@ -89,6 +91,37 @@ describe('replaceUpstreamCommands', () => {
     ];
 
     expect(hancomBasics.filter((id) => !exposed.has(id))).toEqual([]);
+  });
+
+  // 메뉴에 보이는 항목은 어떤 상황에서든 실행될 수 있어야 한다(이름만 있는 껍데기 금지).
+  // 남은 껍데기는 아래 목록으로만 허용하고 줄여 간다.
+  it('backs every menu item with a command that can run somewhere', () => {
+    // 상황 플래그를 하나·둘씩 켜 본다. 어느 상황에서도 꺼져 있으면 껍데기다.
+    const canRunSomewhere = (canExecute: NonNullable<CommandDef['canExecute']>) => {
+      const seen = new Set<string>(['hasDocument']);
+      const ctxWith = (on: Set<string>) =>
+        new Proxy({}, { get: (_t, key) => { seen.add(String(key)); return on.has(String(key)); } }) as never;
+      for (let round = 0; round < 3; round += 1) {
+        const keys = [...seen];
+        const tries: Set<string>[] = [new Set(keys), new Set(['hasDocument'])];
+        for (const a of keys) {
+          tries.push(new Set(['hasDocument', a]));
+          for (const b of keys) tries.push(new Set(['hasDocument', a, b]));
+        }
+        if (tries.some((on) => canExecute(ctxWith(on)))) return true;
+      }
+      return false;
+    };
+    // 메모(주석) 넣기는 엔진에 메모 넣기·그리기가 아직 없다.
+    const knownShells = new Set(['insert:comment']);
+    const byId = new Map(productionCommandGroups.flat().map((def) => [def.id, def]));
+    const menuIds = new Set(Array.from(studioHtml.matchAll(/\bdata-cmd="([^"]+)"/g), ([, id]) => id));
+    const shells = [...menuIds].filter((id) => {
+      const def = byId.get(id);
+      return def?.canExecute ? !canRunSomewhere(def.canExecute) : false;
+    });
+
+    expect(shells.filter((id) => !knownShells.has(id))).toEqual([]);
   });
 
   it('keeps production shortcuts unique and backed by registered commands', () => {

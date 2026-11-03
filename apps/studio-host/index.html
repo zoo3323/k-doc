@@ -100,6 +100,10 @@
               <div class="md-item disabled" data-cmd="view:toolbox-format"><span class="md-label">서식</span></div>
             </div>
           </div>
+          <div class="md-item" data-cmd="view:toggle-ruler"><span class="md-icon"></span><span class="md-label">눈금자</span></div>
+          <div class="md-item" data-cmd="view:toggle-status-bar"><span class="md-icon"></span><span class="md-label">상황 선</span></div>
+          <div class="md-item" data-cmd="view:grayscale"><span class="md-icon"></span><span class="md-label">회색조</span></div>
+          <div class="md-item" data-cmd="view:fullscreen"><span class="md-icon"></span><span class="md-label">전체 화면</span></div>
         </div>
       </div>
       <!-- ── 입력 ── -->
@@ -113,6 +117,15 @@
           <div class="md-item" data-cmd="insert:equation"><span class="md-icon"></span><span class="md-label">수식</span><span class="md-shortcut">Ctrl+M,M</span></div>
           <div class="md-sep"></div>
           <div class="md-item disabled" data-cmd="insert:field"><span class="md-icon"></span><span class="md-label">필드 입력</span><span class="md-shortcut">Ctrl+K+E</span></div>
+          <div class="md-sub disabled">
+            <span class="md-label">필드 넣기</span><span class="md-arrow">▶</span>
+            <div class="md-sub-panel">
+              <div class="md-item disabled" data-cmd="insert:field-page-number"><span class="md-icon"></span><span class="md-label">현재 쪽 번호</span></div>
+              <div class="md-item disabled" data-cmd="insert:field-total-pages"><span class="md-icon"></span><span class="md-label">전체 쪽수</span></div>
+              <div class="md-item disabled" data-cmd="insert:field-page-of-total"><span class="md-icon"></span><span class="md-label">현재 쪽/전체 쪽수</span></div>
+            </div>
+          </div>
+          <div class="md-item disabled" data-cmd="insert:date-time-string"><span class="md-icon"></span><span class="md-label">날짜/시간 문자열</span><span class="md-shortcut">Ctrl+K,D</span></div>
           <div class="md-sep"></div>
           <div class="md-sub disabled">
             <span class="md-label">캡션 넣기</span><span class="md-arrow">▶</span>
@@ -168,6 +181,9 @@
           <div class="md-sep"></div>
           <div class="md-item disabled" data-cmd="format:para-num-shape"><span class="md-icon"></span><span class="md-label">문단 번호 모양</span></div>
           <div class="md-item disabled" data-cmd="format:bullet-shape"><span class="md-icon"></span><span class="md-label">글머리표 모양</span></div>
+          <div class="md-item disabled" data-cmd="format:toggle-numbering"><span class="md-icon"></span><span class="md-label">문단 번호 적용/해제</span></div>
+          <div class="md-item disabled" data-cmd="format:toggle-bullet"><span class="md-icon"></span><span class="md-label">글머리표 적용/해제</span></div>
+          <div class="md-item disabled" data-cmd="format:toggle-outline"><span class="md-icon"></span><span class="md-label">개요 적용/해제</span></div>
           <div class="md-sep"></div>
           <div class="md-item" data-cmd="format:level-increase"><span class="md-icon"></span><span class="md-label">한 수준 증가</span><span class="md-shortcut">Ctrl+Num -</span></div>
           <div class="md-item" data-cmd="format:level-decrease"><span class="md-icon"></span><span class="md-label">한 수준 감소</span><span class="md-shortcut">Ctrl+Num +</span></div>
@@ -327,6 +343,7 @@
             </div>
           </div>
           <div class="md-item disabled" data-cmd="page:new-page-num"><span class="md-icon"></span><span class="md-label">새 번호로 시작</span></div>
+          <div class="md-item disabled" data-cmd="page:hide-dialog"><span class="md-icon"></span><span class="md-label">감추기</span><span class="md-shortcut">Ctrl+M,S</span></div>
           <div class="md-item disabled" data-cmd="page:hide-current"><span class="md-icon"></span><span class="md-label">현재 쪽만 감추기</span></div>
           <div class="md-sep"></div>
           <div class="md-item" data-cmd="page:break"><span class="md-icon"></span><span class="md-label">쪽 나누기</span><span class="md-shortcut">Ctrl+Enter</span></div>
@@ -354,6 +371,8 @@
         <div class="menu-dropdown">
           <div class="md-item disabled" data-cmd="table:create"><span class="md-icon icon-table"></span><span class="md-label">표 만들기</span></div>
           <div class="md-item disabled" data-cmd="table:cell-props"><span class="md-icon"></span><span class="md-label">표/셀 속성</span></div>
+          <div class="md-item disabled" data-cmd="table:split"><span class="md-icon"></span><span class="md-label">표 나누기</span><span class="md-shortcut">Ctrl+M,A</span></div>
+          <div class="md-item disabled" data-cmd="table:attach"><span class="md-icon"></span><span class="md-label">표 붙이기</span><span class="md-shortcut">Ctrl+M,Z</span></div>
           <div class="md-sep"></div>
           <div class="md-sub disabled">
             <span class="md-label">셀 테두리/배경</span><span class="md-arrow">▶</span>
@@ -383,6 +402,18 @@
           <div class="md-item disabled" data-cmd="table:block-sum"><span class="md-icon"></span><span class="md-label">블록 합계</span><span class="md-shortcut">Ctrl+Shift+S</span></div>
           <div class="md-item disabled" data-cmd="table:block-avg"><span class="md-icon"></span><span class="md-label">블록 평균</span><span class="md-shortcut">Ctrl+Shift+A</span></div>
           <div class="md-item disabled" data-cmd="table:block-product"><span class="md-icon"></span><span class="md-label">블록 곱</span><span class="md-shortcut">Ctrl+Shift+P</span></div>
+          <div class="md-sub disabled">
+            <span class="md-label">쉬운 계산식</span><span class="md-arrow">▶</span>
+            <div class="md-sub-panel">
+              <div class="md-item disabled" data-cmd="table:easy-sum-h"><span class="md-icon"></span><span class="md-label">가로 합계</span></div>
+              <div class="md-item disabled" data-cmd="table:easy-sum-v"><span class="md-icon"></span><span class="md-label">세로 합계</span></div>
+              <div class="md-item disabled" data-cmd="table:easy-avg-h"><span class="md-icon"></span><span class="md-label">가로 평균</span></div>
+              <div class="md-item disabled" data-cmd="table:easy-avg-v"><span class="md-icon"></span><span class="md-label">세로 평균</span></div>
+              <div class="md-item disabled" data-cmd="table:easy-product-h"><span class="md-icon"></span><span class="md-label">가로 곱</span></div>
+              <div class="md-item disabled" data-cmd="table:easy-product-v"><span class="md-icon"></span><span class="md-label">세로 곱</span></div>
+            </div>
+          </div>
+          <div class="md-item disabled" data-cmd="table:formula"><span class="md-icon"></span><span class="md-label">계산식</span><span class="md-shortcut">Ctrl+M,F</span></div>
           <div class="md-item disabled" data-cmd="table:thousand-sep"><span class="md-icon"></span><span class="md-label">1,000 단위 구분 쉼표</span></div>
           <div class="md-item disabled" data-cmd="table:decimal-add"><span class="md-icon"></span><span class="md-label">자릿점 넣기</span></div>
           <div class="md-item disabled" data-cmd="table:decimal-remove"><span class="md-icon"></span><span class="md-label">자릿점 빼기</span></div>

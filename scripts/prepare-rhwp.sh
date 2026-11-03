@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RHWP="$ROOT/third_party/rhwp"
 BASE=ad4bf269ffef5adf2142b33004a9981fad7ce804
-MARKER="글상자 안 수식도 셀 문단 안 인덱스로 읽고 고친다"
+MARKER="한글 메뉴 빈칸 채우기 — 캡션 위치 9방향, 셀 너비·높이를 같게, 본문 쪽 번호 필드, 문단 띠"
 
 if [ ! -e "$RHWP/Cargo.toml" ]; then
   echo "[rhwp] upstream $BASE 받기"

@@ -1,0 +1,15 @@
+/* 보기 메뉴(한글): 도구 상자·눈금자·상황 선 숨기기, 회색조. */
+:root[data-toolbox-basic="hidden"] #icon-toolbar { display: none; }
+:root[data-toolbox-format="hidden"] #style-bar { display: none; }
+
+:root.kdoc-no-ruler #editor-area {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+:root.kdoc-no-ruler #ruler-corner,
+:root.kdoc-no-ruler #h-ruler,
+:root.kdoc-no-ruler #v-ruler { display: none; }
+
+:root.kdoc-no-status #status-bar { display: none; }
+
+:root.kdoc-grayscale #scroll-content { filter: grayscale(1); }

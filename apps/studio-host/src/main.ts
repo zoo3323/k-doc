@@ -9,6 +9,7 @@ import type { DocumentInfo } from '@/upstream/core';
 import { createDesktopDocument, setupDesktopEvents } from '@/core/desktop-events';
 import { detectDesktopPlatform, hasPrimaryModifier, hydrateDesktopPlatform } from '@/core/platform';
 import { CanvasView, Ruler } from '@/upstream/view';
+import { syncToolboxMenu } from '@upstream/command/commands/view';
 import {
   CellSelectionRenderer,
   InputHandler,
@@ -88,6 +89,8 @@ async function initialize(): Promise<void> {
     const tauriRuntime = isTauriRuntime();
     desktopPlatform = await hydrateDesktopPlatform();
     applyDesktopChromePlatformState(document, desktopPlatform);
+    // 보기 → 도구 상자 접기/펼치기: 저장된 설정을 첫 화면부터 반영한다.
+    syncToolboxMenu();
     if (tauriRuntime) {
       installExternalLinkOpener(window, async (url) => {
         const { invoke } = await import('@tauri-apps/api/core');
