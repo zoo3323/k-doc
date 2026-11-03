@@ -1,4 +1,4 @@
-From 089f878cc6da93c422089c15ce9fd4851c0c6ed2 Mon Sep 17 00:00:00 2001
+From 2317dd269e7ce5ceb9f44da61b0753f9ce66f3bd Mon Sep 17 00:00:00 2001
 From: k-doc <k-doc@localhost>
 Date: Tue, 3 Nov 2026 11:10:21 +0900
 Subject: [PATCH] =?UTF-8?q?feat(equation):=20=ED=91=9C=20=EC=85=80=20?=
@@ -1330,7 +1330,7 @@ index 7f31f1a8f..b54d3c2b0 100644
                                  BoundingBox::new(
                                      crate::renderer::equation::inline_box::horizontal_metrics(eq)
 diff --git a/src/renderer/layout/table_partial.rs b/src/renderer/layout/table_partial.rs
-index 7ede1cd9f..5af3842f5 100644
+index 7ede1cd9f..2c3bd5d5e 100644
 --- a/src/renderer/layout/table_partial.rs
 +++ b/src/renderer/layout/table_partial.rs
 @@ -4272,10 +4272,11 @@ impl LayoutEngine {
@@ -1338,11 +1338,11 @@ index 7ede1cd9f..5af3842f5 100644
                                          section_index: Some(section_index),
                                          para_index: Some(para_index),
 -                                        control_index: Some(ctrl_idx),
-+                                        control_index: table_meta.map(|(_, otci)| otci).or(Some(ctrl_idx)),
++                                        control_index: Some(control_index),
                                          cell_index: Some(cell_idx),
                                          cell_para_index: Some(cp_idx),
                                          note_ref: None,
-+                                        inner_control_index: table_meta.map(|_| ctrl_idx),
++                                        inner_control_index: Some(ctrl_idx),
                                      }),
                                      BoundingBox::new(
                      crate::renderer::equation::inline_box::horizontal_metrics(eq).content_origin_x(eq_x, self.dpi),
