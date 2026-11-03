@@ -120,3 +120,50 @@ jobs:
             third_party/rhwp/samples/two_column_exam_floats/*.hwpx \
             "third_party/rhwp/samples/2010-01-06.hwp" \
             "third_party/rhwp/samples/2022년 국립국어원 업무계획.hwp"
+
+  # 엔진 패치(patches/rhwp)를 고치면 그 단위 테스트를 돌리고, 저장소 WASM 사본을 바꿀 때 쓸
+  # 빌드 산출물(rhwp-pkg)을 올린다. 로컬 맥에서는 Rust/WASM 을 빌드하지 않는다.
+  engine:
+    name: 엔진 테스트·WASM (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      WASM_PACK_VERSION: '0.15.0'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: rhwp 받기와 패치
+        run: scripts/prepare-rhwp.sh
+
+      - name: Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target wasm32-unknown-unknown
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: third_party/rhwp -> target
+          key: engine
+
+      # K-Doc 패치가 다루는 영역의 단위 테스트(이름 필터).
+      - name: 엔진 단위 테스트
+        working-directory: third_party/rhwp
+        run: cargo test --locked --lib -- equation
+
+      - name: wasm-pack
+        run: |
+          name="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl"
+          curl -sSfL --retry 5 -o /tmp/wasm-pack.tgz \
+            "https://github.com/rustwasm/wasm-pack/releases/download/v${WASM_PACK_VERSION}/${name}.tar.gz"
+          tar -xzf /tmp/wasm-pack.tgz -C /tmp
+          sudo mv "/tmp/${name}/wasm-pack" /usr/local/bin/wasm-pack
+
+      - name: WASM 빌드
+        working-directory: third_party/rhwp
+        run: scripts/wasm-pack-locked.sh --target web --out-dir pkg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rhwp-pkg
+          path: third_party/rhwp/pkg/
+          retention-days: 7

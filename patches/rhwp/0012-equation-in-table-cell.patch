@@ -1,0 +1,1524 @@
+From 089f878cc6da93c422089c15ce9fd4851c0c6ed2 Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 11:10:21 +0900
+Subject: [PATCH] =?UTF-8?q?feat(equation):=20=ED=91=9C=20=EC=85=80=20?=
+ =?UTF-8?q?=EC=95=88=EC=97=90=20=EC=88=98=EC=8B=9D=EC=9D=84=20=EB=84=A3?=
+ =?UTF-8?q?=EA=B3=A0,=20=ED=95=9C=20=EC=85=80=20=EB=AC=B8=EB=8B=A8?=
+ =?UTF-8?q?=EC=9D=98=20=EC=88=98=EC=8B=9D=EC=9D=84=20=ED=95=98=EB=82=98?=
+ =?UTF-8?q?=EC=94=A9=20=EA=B3=A0=EC=B9=98=EA=B3=A0=20=EC=A7=80=EC=9A=B4?=
+ =?UTF-8?q?=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- insert_equation_in_cell_native / WASM insertEquationInCell: 셀 문단에 글자처럼 취급 수식을 넣는다.
+- 쪽 개체 목록의 셀 수식에 innerControlIdx(셀 문단 안 인덱스)를 싣고, controlIdx 는 바깥 표로 맞춘다.
+- get/setEquationProperties 가 innerControlIdx 를 받는다. 예전에는 셀 문단의 첫 수식만 짚혀
+  같은 문단의 두 번째 이후 수식을 눌러도 첫 수식이 고쳐졌다(수학 시험지 표본에서 확인).
+- deleteCellEquationControlByPath: 셀 안 수식을 셀 경로로 지운다.
+- 수식 instance ID 를 셀 안 수식까지 세어 매긴다.
+- CLI edit insert-equation --cell-path, MCP hwp_insert_equation cellPath.
+- studio: 셀 안에서 수식 넣기를 켜고(표 안의 표·글상자는 안내), 선택·편집·삭제에 innerControlIdx 를 넘긴다.
+---
+ rhwp-studio/src/command/commands/insert.ts    |  45 ++-
+ .../src/core/mutation-method-registry.ts      |   2 +-
+ rhwp-studio/src/core/wasm-bridge.ts           |  21 +-
+ rhwp-studio/src/engine/cell-equation.ts       |  34 ++
+ rhwp-studio/src/engine/cursor.ts              |   5 +-
+ .../src/engine/input-handler-keyboard.ts      |   6 +-
+ rhwp-studio/src/engine/input-handler-mouse.ts |   3 +
+ .../src/engine/input-handler-picture.ts       |  11 +-
+ rhwp-studio/src/engine/input-handler.ts       |   2 +-
+ rhwp-studio/src/ui/equation-editor-dialog.ts  |   7 +-
+ rhwp-studio/src/ui/equation-props-dialog.ts   |  10 +-
+ src/cli/commands/edit/equations.rs            |  55 ++-
+ src/cli/metadata/help/edit.rs                 |   4 +-
+ src/cli/metadata/mcp/edit_content.rs          |   6 +-
+ .../commands/object_ops/equation.rs           | 377 +++++++++++++++---
+ .../commands/object_ops/table.rs              |  18 +
+ src/document_core/queries/rendering.rs        |   6 +-
+ src/paint/builder.rs                          |   1 +
+ src/paint/json.rs                             |   1 +
+ src/render_backend/scenes.rs                  |   1 +
+ src/renderer/canvaskit_policy.rs              |   1 +
+ src/renderer/layout/floating_equation.rs      |   1 +
+ src/renderer/layout/paragraph_layout.rs       |   8 +
+ src/renderer/layout/shape_layout.rs           |   2 +
+ src/renderer/layout/table_layout.rs           |   3 +-
+ src/renderer/layout/table_partial.rs          |   3 +-
+ src/renderer/render_tree.rs                   |   3 +
+ src/renderer/skia/renderer.rs                 |   2 +
+ src/wasm_api.rs                               |  55 ++-
+ tests/cases/issue_6520_svg_layer_contract.rs  |   1 +
+ tests/provenance_contract.rs                  |   5 +
+ 31 files changed, 604 insertions(+), 95 deletions(-)
+ create mode 100644 rhwp-studio/src/engine/cell-equation.ts
+
+diff --git a/rhwp-studio/src/command/commands/insert.ts b/rhwp-studio/src/command/commands/insert.ts
+index c26e91904..3485ea781 100644
+--- a/rhwp-studio/src/command/commands/insert.ts
++++ b/rhwp-studio/src/command/commands/insert.ts
+@@ -21,8 +21,9 @@ import { showToast } from '@/ui/toast';
+ import type { ShapeType } from '@/ui/shape-picker';
+ import type { CellPathLike } from '@/core/types';
+ import type { WasmBridge } from '@/core/wasm-bridge';
++import { deleteEquationRef } from '@/engine/cell-equation';
+ import type { InputHandler } from '@/engine/input-handler';
+-import { SetObjectPropsCommand, SetZOrderCommand, type RefreshPolicy } from '@/engine/command';
++import { SetObjectPropsCommand, SetZOrderCommand, cellPathForEdit, type RefreshPolicy } from '@/engine/command';
+ import { getObjectProps, setObjectProps, type ObjectPropsRef } from '@/engine/object-props';
+ 
+ import { t } from '../../i18n/index.ts';
+@@ -186,15 +187,43 @@ export const insertCommands: CommandDef[] = [
+     opensDialog: true,
+     label: t('command.insert.equation.label'),
+     shortcutLabel: 'Ctrl+M,M',
+-    canExecute: (ctx) => ctx.hasDocument && !ctx.inTable,
++    canExecute: (ctx) => ctx.hasDocument,
+     execute(services) {
+       const ih = services.getInputHandler();
+       if (!ih) return;
+-      const pos = ih.getPosition();
+-      // 본문 전용 — 표 셀 내부에서는 실행하지 않음
+-      if ((pos as any).cellIndex !== undefined && (pos as any).cellIndex >= 0) return;
++      const pos = ih.getCursorPosition();
+       const defaultFontSize = 1000; // 10pt → HWPUNIT
+       const defaultColor = 0x00000000; // 검정
++      // 표 셀 안: 셀 문단에 글자처럼 넣는다(한글과 같음). 표 안의 표·글상자는 아직 아니다.
++      const inCell = pos.parentParaIndex !== undefined && (pos.cellIndex ?? -1) >= 0;
++      if (inCell) {
++        if (pos.isTextBox || (pos.cellPath?.length ?? 1) > 1) {
++          showToast({ message: '표 안의 표와 글상자에는 아직 수식을 넣을 수 없어요.', durationMs: 3500 });
++          return;
++        }
++        const path = cellPathForEdit(pos);
++        const parentPara = pos.parentParaIndex!;
++        let cellResult: { ok: boolean; paraIdx: number; controlIdx: number } | undefined;
++        ih.executeOperation({
++          kind: 'snapshot',
++          operationType: 'insertEquation',
++          operation: (wasm) => {
++            cellResult = wasm.insertEquationInCell(
++              pos.sectionIndex, parentPara, path, pos.charOffset,
++              '', defaultFontSize, defaultColor,
++            );
++            if (!cellResult.ok) throw new Error('[insert:equation] 셀 수식 삽입 실패');
++            return pos;
++          },
++        });
++        if (!cellResult) return;
++        equationEditorDialog ??= new EquationEditorDialog(services.wasm, services.eventBus, services);
++        equationEditorDialog.open(
++          pos.sectionIndex, parentPara, path[0].controlIndex,
++          path[0].cellIndex, path[0].cellParaIndex, undefined, cellResult.controlIdx,
++        );
++        return;
++      }
+       // [Task #3207] 수식 삽입도 본문 문자 수를 바꾸므로 snapshot 으로 기록한다(각주/미주와 동형).
+       let result: { ok: boolean; paraIdx: number; controlIdx: number } | undefined;
+       ih.executeOperation({
+@@ -372,7 +401,7 @@ export const insertCommands: CommandDef[] = [
+         if (!equationPropsDialog) {
+           equationPropsDialog = new EquationPropertiesDialog(services.wasm, services.eventBus, services);
+         }
+-        equationPropsDialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef);
++        equationPropsDialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef, ref.innerControlIdx);
+         return;
+       }
+       if (!picturePropsDialog) {
+@@ -463,7 +492,7 @@ export const insertCommands: CommandDef[] = [
+       if (!equationEditorDialog) {
+         equationEditorDialog = new EquationEditorDialog(services.wasm, services.eventBus, services);
+       }
+-      equationEditorDialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef);
++      equationEditorDialog.open(ref.sec, ref.ppi, ref.ci, ref.cellIdx, ref.cellParaIdx, ref.noteRef, ref.innerControlIdx);
+     },
+   },
+   {
+@@ -576,7 +605,7 @@ export const insertCommands: CommandDef[] = [
+         if (ref.type === 'shape' || ref.type === 'line' || ref.type === 'group' || ref.type === 'ole') {
+           wasm.deleteShapeControl(ref.sec, ref.ppi, ref.ci);
+         } else if (ref.type === 'equation') {
+-          wasm.deleteEquationControl(ref.sec, ref.ppi, ref.ci);
++          deleteEquationRef(wasm, ref);
+         } else if (ref.cellPath && ref.cellPath.length > 0) {
+           wasm.deleteCellPictureControlByPath(ref.sec, ref.ppi, ref.cellPath, ref.ci);
+         } else {
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 65a097958..6ae304d57 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -46,7 +46,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'createShapeControl', 'setShapeProperties', 'deleteShapeControl', 'changeShapeZOrder',
+   'applyShapeZOrderPairs', // [#5769 후속] z 절대 대입 — SetZOrderCommand 의 undo/redo 경로
+   'groupShapes', 'ungroupShape', 'moveLineEndpoint', 'updateConnectorsInSection',
+-  'insertEquation', 'promoteOleEquation', 'setEquationProperties', 'setNoteEquationProperties', 'deleteEquationControl',
++  'insertEquation', 'insertEquationInCell', 'deleteCellEquationControlByPath', 'promoteOleEquation', 'setEquationProperties', 'setNoteEquationProperties', 'deleteEquationControl',
+   // 차트 데이터 (#4694) — bin_data_content 슬롯 바이트 변이 (IR 무변경이지만 직렬화 결과가 바뀐다)
+   'setChartData', 'setChartDataByIndex',
+   // 각주/미주
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index 024f5f8cf..d7b282852 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -2589,9 +2589,10 @@ export class WasmBridge {
+   }
+ 
+   // ── 수식 속성 API ─────────────────────────────────────
+-  getEquationProperties(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number): import('./types').EquationProperties {
++  /** `innerControlIdx`: 셀 안 수식이면 셀 문단 안 컨트롤 인덱스(없으면 셀 문단의 첫 수식). */
++  getEquationProperties(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number, innerControlIdx?: number): import('./types').EquationProperties {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+-    return JSON.parse(this.doc.getEquationProperties(sec, para, ci, cellIdx ?? -1, cellParaIdx ?? -1));
++    return JSON.parse((this.doc as any).getEquationProperties(sec, para, ci, cellIdx ?? -1, cellParaIdx ?? -1, innerControlIdx));
+   }
+ 
+   getNoteEquationProperties(noteRef: import('./types').NoteControlRef): import('./types').EquationProperties {
+@@ -2606,9 +2607,9 @@ export class WasmBridge {
+     ));
+   }
+ 
+-  setEquationProperties(sec: number, para: number, ci: number, cellIdx: number | undefined, cellParaIdx: number | undefined, props: Record<string, unknown>): { ok: boolean } {
++  setEquationProperties(sec: number, para: number, ci: number, cellIdx: number | undefined, cellParaIdx: number | undefined, props: Record<string, unknown>, innerControlIdx?: number): { ok: boolean } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+-    return JSON.parse(this.doc.setEquationProperties(sec, para, ci, cellIdx ?? -1, cellParaIdx ?? -1, JSON.stringify(props)));
++    return JSON.parse((this.doc as any).setEquationProperties(sec, para, ci, cellIdx ?? -1, cellParaIdx ?? -1, JSON.stringify(props), innerControlIdx));
+   }
+ 
+   setNoteEquationProperties(noteRef: import('./types').NoteControlRef, props: Record<string, unknown>): { ok: boolean } {
+@@ -2716,6 +2717,18 @@ export class WasmBridge {
+     return JSON.parse((this.doc as any).insertEquation(sec, para, charOffset, script, fontSizeHwpunit, color));
+   }
+ 
++  /** 표 셀 안 문단에 수식을 넣는다. 반환 controlIdx 는 셀 문단 안 인덱스. */
++  insertEquationInCell(sec: number, parentPara: number, cellPath: CellPathLike, charOffset: number, script: string, fontSizeHwpunit: number, color: number): { ok: boolean; paraIdx: number; controlIdx: number } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).insertEquationInCell(sec, parentPara, JSON.stringify(cellPath), charOffset, script, fontSizeHwpunit, color));
++  }
++
++  /** 표 셀/글상자 안 수식 삭제 (by_path). */
++  deleteCellEquationControlByPath(sec: number, parentPara: number, cellPath: CellPathLike, innerControlIdx: number): { ok: boolean } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).deleteCellEquationControlByPath(sec, parentPara, JSON.stringify(cellPath), innerControlIdx));
++  }
++
+   promoteOleEquation(sec: number, para: number, ci: number): { ok: boolean; paraIdx: number; controlIdx: number; script: string } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+     return JSON.parse((this.doc as any).promoteOleEquation(sec, para, ci));
+diff --git a/rhwp-studio/src/engine/cell-equation.ts b/rhwp-studio/src/engine/cell-equation.ts
+new file mode 100644
+index 000000000..0820e0e34
+--- /dev/null
++++ b/rhwp-studio/src/engine/cell-equation.ts
+@@ -0,0 +1,34 @@
++import type { WasmBridge } from '@/core/wasm-bridge';
++
++/** 수식 개체 주소. 셀 안 수식은 `ci` 가 바깥 표, `innerControlIdx` 가 셀 문단 안 인덱스다. */
++export interface EquationRef {
++  sec: number;
++  ppi: number;
++  ci: number;
++  cellIdx?: number;
++  cellParaIdx?: number;
++  innerControlIdx?: number;
++}
++
++/** 셀 문단 안 인덱스까지 아는 깊이 1 표 셀 수식인가. */
++export function isAddressedCellEquation(ref: EquationRef): ref is EquationRef & {
++  cellIdx: number;
++  cellParaIdx: number;
++  innerControlIdx: number;
++} {
++  return ref.cellIdx !== undefined && ref.cellParaIdx !== undefined && ref.innerControlIdx !== undefined;
++}
++
++/** 수식을 지운다. 셀 안 수식은 셀 경로로, 본문 수식은 예전처럼. */
++export function deleteEquationRef(wasm: WasmBridge, ref: EquationRef): void {
++  if (isAddressedCellEquation(ref)) {
++    wasm.deleteCellEquationControlByPath(
++      ref.sec,
++      ref.ppi,
++      [{ controlIndex: ref.ci, cellIndex: ref.cellIdx, cellParaIndex: ref.cellParaIdx }],
++      ref.innerControlIdx,
++    );
++    return;
++  }
++  wasm.deleteEquationControl(ref.sec, ref.ppi, ref.ci);
++}
+diff --git a/rhwp-studio/src/engine/cursor.ts b/rhwp-studio/src/engine/cursor.ts
+index d09f7fe8e..9ccfd6fce 100644
+--- a/rhwp-studio/src/engine/cursor.ts
++++ b/rhwp-studio/src/engine/cursor.ts
+@@ -44,6 +44,8 @@ type PictureSelectionRef = {
+   missing?: boolean;
+   /** 마우스 hit 당시의 실제 page layout. 동일 주소의 분할 항목 선택에 사용한다. */
+   pageIndex?: number;
++  /** 셀 안 수식: 셀 문단 안 컨트롤 인덱스(`ci` 는 바깥 표). */
++  innerControlIdx?: number;
+ };
+ 
+ /** 커서 상태를 관리한다 */
+@@ -2007,10 +2009,11 @@ export class CursorState {
+     noteRef?: any,
+     missing?: boolean,
+     pageIndex?: number,
++    innerControlIdx?: number,
+   ): void {
+     this.exitTableObjectSelection();
+     this._pictureObjectSelected = true;
+-    this.selectedPictureRef = { sec, ppi, ci, type, cellIdx, cellParaIdx, outerTableControlIdx, cellPath, noteRef, headerFooter, missing, pageIndex };
++    this.selectedPictureRef = { sec, ppi, ci, type, cellIdx, cellParaIdx, outerTableControlIdx, cellPath, noteRef, headerFooter, missing, pageIndex, innerControlIdx };
+     this.selectedPictureRefs = [{ ...this.selectedPictureRef }];
+   }
+ 
+diff --git a/rhwp-studio/src/engine/input-handler-keyboard.ts b/rhwp-studio/src/engine/input-handler-keyboard.ts
+index 28eae700d..409155a00 100755
+--- a/rhwp-studio/src/engine/input-handler-keyboard.ts
++++ b/rhwp-studio/src/engine/input-handler-keyboard.ts
+@@ -24,6 +24,7 @@ import { inlineOfficeClipboardImages, liftImagesToBlockLevel, needsRtfImageInlin
+ import { sanitizeOfficeHtmlForCore } from './office-html-sanitize';
+ import { scrollByPageStep, type PageScrollDirection } from '@/view/page-scroll';
+ import { emitHeaderFooterModeChanged } from './header-footer-mode';
++import { deleteEquationRef } from './cell-equation';
+ 
+ const RHWP_CLIPBOARD_MARKER_RE = /<!--\s*rhwp-studio-clipboard:([A-Za-z0-9._:-]+)\s*-->/;
+ const PAGINATION_BOUNDARY_KEYS = new Set([
+@@ -260,6 +261,9 @@ type PictureDeleteRef = {
+   ci: number;
+   type: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole';
+   cellPath?: CellPathLike;
++  cellIdx?: number;
++  cellParaIdx?: number;
++  innerControlIdx?: number;
+ };
+ 
+ function deleteSelectedObject(wasm: WasmBridge, ref: PictureDeleteRef): void {
+@@ -270,7 +274,7 @@ function deleteSelectedObject(wasm: WasmBridge, ref: PictureDeleteRef): void {
+       wasm.deletePictureControl(ref.sec, ref.ppi, ref.ci);
+     }
+   } else if (ref.type === 'equation') {
+-    wasm.deleteEquationControl(ref.sec, ref.ppi, ref.ci);
++    deleteEquationRef(wasm, ref);
+   } else {
+     wasm.deleteShapeControl(ref.sec, ref.ppi, ref.ci);
+   }
+diff --git a/rhwp-studio/src/engine/input-handler-mouse.ts b/rhwp-studio/src/engine/input-handler-mouse.ts
+index da0ca87e0..d93468ec4 100644
+--- a/rhwp-studio/src/engine/input-handler-mouse.ts
++++ b/rhwp-studio/src/engine/input-handler-mouse.ts
+@@ -891,6 +891,7 @@ export function onClick(this: any, e: MouseEvent): void {
+             undefined,
+             (picHit as any).missing,
+             (picHit as any).pageIndex,
++            (picHit as any).innerControlIdx,
+           );
+           this.active = true;
+           this.caret.hide();
+@@ -1192,6 +1193,7 @@ export function onClick(this: any, e: MouseEvent): void {
+           (tbPic as any).noteRef,
+           (tbPic as any).missing,
+           (tbPic as any).pageIndex,
++          (tbPic as any).innerControlIdx,
+         );
+         this.active = true;
+         this.caret.hide();
+@@ -1298,6 +1300,7 @@ export function onClick(this: any, e: MouseEvent): void {
+           (picHit as any).noteRef,
+           (picHit as any).missing,
+           (picHit as any).pageIndex,
++          (picHit as any).innerControlIdx,
+         );
+         this.active = true;
+         this.caret.hide();
+diff --git a/rhwp-studio/src/engine/input-handler-picture.ts b/rhwp-studio/src/engine/input-handler-picture.ts
+index edc15b2f9..459ac1a18 100644
+--- a/rhwp-studio/src/engine/input-handler-picture.ts
++++ b/rhwp-studio/src/engine/input-handler-picture.ts
+@@ -17,6 +17,7 @@ import {
+ import { clearObjectEditingPage, summarizeObjectSelection } from './object-selection-page';
+ import type { CellPathLike } from '@/core/types';
+ import { showToast } from '@/ui/toast';
++import { deleteEquationRef } from './cell-equation';
+ 
+ type PictureObjectRef = {
+   sec: number;
+@@ -25,6 +26,8 @@ type PictureObjectRef = {
+   type: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole';
+   cellIdx?: number;
+   cellParaIdx?: number;
++  /** 셀 안 수식: 셀 문단 안 컨트롤 인덱스. */
++  innerControlIdx?: number;
+   outerTableControlIdx?: number;
+   cellPath?: CellPathLike;
+   noteRef?: any;
+@@ -147,7 +150,7 @@ function controlToRef(ctrl: any, pageIndex?: number): PictureObjectRef {
+     return lineControlReference(ctrl, pageIndex);
+   }
+   return { sec: ctrl.secIdx, ppi: ctrl.paraIdx, ci: ctrl.controlIdx, type: ctrl.type,
+-    cellIdx: ctrl.cellIdx, cellParaIdx: ctrl.cellParaIdx, outerTableControlIdx: ctrl.outerTableControlIdx,
++    cellIdx: ctrl.cellIdx, cellParaIdx: ctrl.cellParaIdx, innerControlIdx: ctrl.innerControlIdx, outerTableControlIdx: ctrl.outerTableControlIdx,
+     cellPath: ctrl.cellPath, noteRef: ctrl.noteRef, headerFooter: ctrl.headerFooter, missing: ctrl.missing, pageIndex };
+ }
+ 
+@@ -321,7 +324,7 @@ export function findPictureAtClick(this: any,
+ 
+ /** 선택된 개체의 bbox를 페이지 레이아웃에서 찾는다. */
+ export function findPictureBbox(this: any,
+-  ref: { sec: number; ppi: number; ci: number; type?: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole'; cellIdx?: number; cellParaIdx?: number; cellPath?: CellPathLike; noteRef?: any; pageIndex?: number },
++  ref: { sec: number; ppi: number; ci: number; type?: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole'; cellIdx?: number; cellParaIdx?: number; innerControlIdx?: number; cellPath?: CellPathLike; noteRef?: any; pageIndex?: number },
+ ): { pageIndex: number; x: number; y: number; w: number; h: number; x1?: number; y1?: number; x2?: number; y2?: number } | null {
+   const matchType = ref.type ?? 'image';
+   // line은 shape의 하위 타입 → layout에서 'line'으로 반환됨
+@@ -335,6 +338,7 @@ export function findPictureBbox(this: any,
+           // 표 셀 내 수식: cellIdx/cellParaIdx도 매칭
+           if (matchType === 'equation' && ref.cellIdx !== undefined) {
+             if (ctrl.cellIdx !== ref.cellIdx || ctrl.cellParaIdx !== ref.cellParaIdx) continue;
++            if (ref.innerControlIdx !== undefined && ctrl.innerControlIdx !== ref.innerControlIdx) continue;
+           }
+           if (matchType === 'equation' && ref.noteRef) {
+             const nr = ctrl.noteRef;
+@@ -416,6 +420,7 @@ export function renderPictureObjectSelection(this: any): void {
+           // 표 셀 내 수식: cellIdx/cellParaIdx도 매칭
+           if (matchType === 'equation' && ref.cellIdx !== undefined) {
+             if (ctrl.cellIdx !== ref.cellIdx || ctrl.cellParaIdx !== ref.cellParaIdx) continue;
++            if (ref.innerControlIdx !== undefined && ctrl.innerControlIdx !== ref.innerControlIdx) continue;
+           }
+           if (matchType === 'equation' && ref.noteRef) {
+             const nr = ctrl.noteRef;
+@@ -579,7 +584,7 @@ export function deleteObjectControl(this: any, ref: PictureObjectRef): void {
+   if (ref.type === 'shape' || ref.type === 'group' || ref.type === 'line' || ref.type === 'ole') {
+     this.wasm.deleteShapeControl(ref.sec, ref.ppi, ref.ci);
+   } else if (ref.type === 'equation') {
+-    this.wasm.deleteEquationControl(ref.sec, ref.ppi, ref.ci);
++    deleteEquationRef(this.wasm, ref);
+   } else {
+     if (hasCellPath(ref)) {
+       this.wasm.deleteCellPictureControlByPath(ref.sec, ref.ppi, ref.cellPath, ref.ci);
+diff --git a/rhwp-studio/src/engine/input-handler.ts b/rhwp-studio/src/engine/input-handler.ts
+index e80800b49..8430bdf63 100644
+--- a/rhwp-studio/src/engine/input-handler.ts
++++ b/rhwp-studio/src/engine/input-handler.ts
+@@ -4887,7 +4887,7 @@ export class InputHandler {
+   isInPictureObjectSelection(): boolean { return this.cursor.isInPictureObjectSelection(); }
+ 
+   /** 선택된 그림/글상자 참조 반환 ([Task #825] headerFooter 동반 시 머리말/꼬리말 picture marker) */
+-  getSelectedPictureRef(): { sec: number; ppi: number; ci: number; type: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole'; cellIdx?: number; cellParaIdx?: number; outerTableControlIdx?: number; cellPath?: Array<{ controlIndex: number; cellIndex: number; cellParaIndex: number }>; noteRef?: any; headerFooter?: { kind: 'header' | 'footer'; outerParaIdx: number; outerControlIdx: number } } | null { return this.cursor.getSelectedPictureRef(); }
++  getSelectedPictureRef(): { sec: number; ppi: number; ci: number; type: 'image' | 'shape' | 'equation' | 'group' | 'line' | 'ole'; cellIdx?: number; cellParaIdx?: number; innerControlIdx?: number; outerTableControlIdx?: number; cellPath?: Array<{ controlIndex: number; cellIndex: number; cellParaIndex: number }>; noteRef?: any; headerFooter?: { kind: 'header' | 'footer'; outerParaIdx: number; outerControlIdx: number } } | null { return this.cursor.getSelectedPictureRef(); }
+ 
+   /**
+    * 선택된 개체 밖(인접 문단)의 위치 — 커서를 옮기지 않는다 (Task #3351).
+diff --git a/rhwp-studio/src/ui/equation-editor-dialog.ts b/rhwp-studio/src/ui/equation-editor-dialog.ts
+index 92f2d96e4..00c9092fa 100644
+--- a/rhwp-studio/src/ui/equation-editor-dialog.ts
++++ b/rhwp-studio/src/ui/equation-editor-dialog.ts
+@@ -249,6 +249,7 @@ export class EquationEditorDialog {
+   private cellIdx?: number;
+   private cellParaIdx?: number;
+   private noteRef?: NoteControlRef;
++  private innerControlIdx?: number;
+ 
+   // 원본 속성 (비교용)
+   private origProps: EquationProperties | null = null;
+@@ -266,7 +267,7 @@ export class EquationEditorDialog {
+   }
+ 
+   /** 대화상자 열기 */
+-  open(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number, noteRef?: NoteControlRef): void {
++  open(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number, noteRef?: NoteControlRef, innerControlIdx?: number): void {
+     this.build();
+     this.sec = sec;
+     this.para = para;
+@@ -274,11 +275,12 @@ export class EquationEditorDialog {
+     this.cellIdx = cellIdx;
+     this.cellParaIdx = cellParaIdx;
+     this.noteRef = noteRef;
++    this.innerControlIdx = innerControlIdx;
+ 
+     try {
+       this.origProps = noteRef
+         ? this.wasm.getNoteEquationProperties(noteRef)
+-        : this.wasm.getEquationProperties(sec, para, ci, cellIdx, cellParaIdx);
++        : this.wasm.getEquationProperties(sec, para, ci, cellIdx, cellParaIdx, innerControlIdx);
+     } catch (err) {
+       console.warn('[EquationEditor] 수식 속성 가져오기 실패:', err);
+       return;
+@@ -747,6 +749,7 @@ export class EquationEditorDialog {
+             this.cellIdx,
+             this.cellParaIdx,
+             updated,
++            this.innerControlIdx,
+           );
+         }
+       };
+diff --git a/rhwp-studio/src/ui/equation-props-dialog.ts b/rhwp-studio/src/ui/equation-props-dialog.ts
+index 4f8ee4cf7..0449fb02b 100644
+--- a/rhwp-studio/src/ui/equation-props-dialog.ts
++++ b/rhwp-studio/src/ui/equation-props-dialog.ts
+@@ -55,6 +55,7 @@ export class EquationPropertiesDialog {
+   private cellIdx?: number;
+   private cellParaIdx?: number;
+   private noteRef?: NoteControlRef;
++  private innerControlIdx?: number;
+   private props: EquationProperties | null = null;
+ 
+   private widthInput!: HTMLInputElement;
+@@ -81,7 +82,7 @@ export class EquationPropertiesDialog {
+     private services?: CommandServices,
+   ) {}
+ 
+-  open(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number, noteRef?: NoteControlRef): void {
++  open(sec: number, para: number, ci: number, cellIdx?: number, cellParaIdx?: number, noteRef?: NoteControlRef, innerControlIdx?: number): void {
+     this.build();
+     this.sec = sec;
+     this.para = para;
+@@ -89,11 +90,12 @@ export class EquationPropertiesDialog {
+     this.cellIdx = cellIdx;
+     this.cellParaIdx = cellParaIdx;
+     this.noteRef = noteRef;
++    this.innerControlIdx = innerControlIdx;
+ 
+     try {
+       this.props = noteRef
+         ? this.wasm.getNoteEquationProperties(noteRef)
+-        : this.wasm.getEquationProperties(sec, para, ci, cellIdx, cellParaIdx);
++        : this.wasm.getEquationProperties(sec, para, ci, cellIdx, cellParaIdx, innerControlIdx);
+     } catch (err) {
+       console.warn('[EquationProperties] 수식 속성 가져오기 실패:', err);
+       return;
+@@ -355,7 +357,7 @@ export class EquationPropertiesDialog {
+         if (this.noteRef) {
+           this.wasm.setNoteEquationProperties(this.noteRef, updated);
+         } else {
+-          this.wasm.setEquationProperties(this.sec, this.para, this.ci, this.cellIdx, this.cellParaIdx, updated);
++          this.wasm.setEquationProperties(this.sec, this.para, this.ci, this.cellIdx, this.cellParaIdx, updated, this.innerControlIdx);
+         }
+       };
+       try {
+@@ -387,7 +389,7 @@ export class EquationPropertiesDialog {
+   private openEditor(): void {
+     this.hide();
+     const editor = new EquationEditorDialog(this.wasm, this.eventBus, this.services);
+-    editor.open(this.sec, this.para, this.ci, this.cellIdx, this.cellParaIdx, this.noteRef);
++    editor.open(this.sec, this.para, this.ci, this.cellIdx, this.cellParaIdx, this.noteRef, this.innerControlIdx);
+   }
+ 
+   private captionPositionLabel(): string {
+diff --git a/src/cli/commands/edit/equations.rs b/src/cli/commands/edit/equations.rs
+index 6f876ec02..871d7d68d 100644
+--- a/src/cli/commands/edit/equations.rs
++++ b/src/cli/commands/edit/equations.rs
+@@ -117,12 +117,13 @@ pub(super) fn edit_set_equation_properties(args: &[String]) -> i32 {
+ /// [#5009] `edit delete-col` — 표 열 삭제.
+ /// `edit insert-equation` — 본문 수식 삽입. 코어 `insert_equation_native`.
+ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+-    const USAGE: &str = "사용법: rhwp edit insert-equation <파일> --script <수식> [--section N] [--para N] [--offset N] [--font-size N] [--color N] [-o <출력>] [--dry-run] [--verify] [--json]";
++    const USAGE: &str = "사용법: rhwp edit insert-equation <파일> --script <수식> [--section N] [--para N] [--cell-path <JSON>] [--offset N] [--font-size N] [--color N] [-o <출력>] [--dry-run] [--verify] [--json]";
+     let mut file_path: Option<&str> = None;
+     let mut script_arg: Option<&str> = None;
+     let mut section: usize = 0;
+     let mut para: usize = 0;
+     let mut offset: usize = 0;
++    let mut cell_path: Vec<(usize, usize, usize)> = Vec::new();
+     let mut font_size: u32 = 1000;
+     let mut color: u32 = 0;
+     let mut out_path: Option<String> = None;
+@@ -170,6 +171,20 @@ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+                     },
+                 }
+             }
++            "--cell-path" => {
++                i += 1;
++                match args.get(i).map(|v| parse_cell_path(v)) {
++                    Some(Ok(path)) => cell_path = path,
++                    Some(Err(e)) => {
++                        eprintln!("오류: --cell-path {e}");
++                        return EXIT_USAGE;
++                    }
++                    None => {
++                        eprintln!("오류: --cell-path 뒤에 JSON 배열이 필요합니다.");
++                        return EXIT_USAGE;
++                    }
++                }
++            }
+             "--script" => {
+                 i += 1;
+                 match args.get(i) {
+@@ -222,8 +237,14 @@ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+         Err(e) => return e.report(),
+     };
+     if !dry_run {
+-        if let Err(e) = doc.insert_equation_native(section, para, offset, script, font_size, color)
+-        {
++        let inserted = if cell_path.is_empty() {
++            doc.insert_equation_native(section, para, offset, script, font_size, color)
++        } else {
++            doc.insert_equation_in_cell_native(
++                section, para, &cell_path, offset, script, font_size, color,
++            )
++        };
++        if let Err(e) = inserted {
+             eprintln!("오류: 수식 삽입 실패 - {e}");
+             return EXIT_RUNTIME;
+         }
+@@ -241,6 +262,14 @@ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+             "section": section,
+             "paragraph": para,
+             "offset": offset,
++            "cellPath": cell_path
++                .iter()
++                .map(|&(control, cell, cell_para)| serde_json::json!({
++                    "controlIndex": control,
++                    "cellIndex": cell,
++                    "cellParaIndex": cell_para
++                }))
++                .collect::<Vec<_>>(),
+             "script": script,
+             "fontSize": font_size,
+             "color": color
+@@ -250,6 +279,26 @@ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+         &format!("수식 삽입 완료: {file_path}"),
+     )
+ }
++/// `--cell-path` JSON(`[{"controlIndex":N,"cellIndex":N,"cellParaIndex":N}, ...]`)을 읽는다.
++fn parse_cell_path(raw: &str) -> Result<Vec<(usize, usize, usize)>, String> {
++    let value: serde_json::Value =
++        serde_json::from_str(raw).map_err(|e| format!("JSON 이 아닙니다: {e}"))?;
++    let entries = value.as_array().ok_or("JSON 배열이어야 합니다.")?;
++    entries
++        .iter()
++        .map(|entry| {
++            let field = |name: &str| {
++                entry
++                    .get(name)
++                    .and_then(serde_json::Value::as_u64)
++                    .map(|n| n as usize)
++                    .ok_or_else(|| format!("각 항목에 0 이상의 정수 {name} 가 필요합니다."))
++            };
++            Ok((field("controlIndex")?, field("cellIndex")?, field("cellParaIndex")?))
++        })
++        .collect()
++}
++
+ /// [#5120] `edit delete-equation` — 본문 수식 삭제.
+ pub(super) fn edit_delete_equation(args: &[String]) -> i32 {
+     const USAGE: &str = "사용법: rhwp edit delete-equation <파일> --section N --para N --ctrl N [-o <출력>] [--dry-run] [--verify] [--json]";
+diff --git a/src/cli/metadata/help/edit.rs b/src/cli/metadata/help/edit.rs
+index 463d53c74..13bbaf755 100644
+--- a/src/cli/metadata/help/edit.rs
++++ b/src/cli/metadata/help/edit.rs
+@@ -288,10 +288,12 @@ pub(super) fn print() {
+     println!("      --dry-run/--json          형제 edit 과 같음");
+     println!();
+     println!("  edit insert-equation <파일> --script <수식> [옵션]");
+-    println!("      본문 문단 좌표에 수식을 끼운다 (표 셀/글상자 내부는 미지원)");
++    println!("      문단 좌표에 수식을 글자처럼 끼운다 (표 셀 안은 --cell-path)");
+     println!();
+     println!("      --script <수식>           한컴 수식 스크립트 (빈 문자열 불가)");
+     println!("      --section/--para/--offset 구역·문단·문자 오프셋 (0부터, 기본 0)");
++    println!("      --cell-path <JSON>        표 셀 안: [{{\"controlIndex\":N,\"cellIndex\":N,\"cellParaIndex\":N}}]");
++    println!("                                --para 는 표가 든 바깥 문단, --offset 은 셀 문단 안 위치");
+     println!("      --font-size N             글자 크기 (HWPUNIT, 기본 1000)");
+     println!("      --color N                 RGB 정수 (기본 0=검정)");
+     println!("      -o, --output <파일>       출력 파일 (기본: 입력명_eq.<확장자>)");
+diff --git a/src/cli/metadata/mcp/edit_content.rs b/src/cli/metadata/mcp/edit_content.rs
+index b4210ad56..3ecd8bc80 100644
+--- a/src/cli/metadata/mcp/edit_content.rs
++++ b/src/cli/metadata/mcp/edit_content.rs
+@@ -426,7 +426,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+         ),
+         tool_with_optional_args(
+             "hwp_insert_equation",
+-            "본문 문단 좌표에 수식을 끼운다. 표 셀/글상자 내부는 미지원. 코어 insert_equation_native 배선.",
++            "문단 좌표에 수식을 글자처럼 끼운다. 표 셀 안이면 cellPath(JSON 문자열, [{controlIndex,cellIndex,cellParaIndex}])를 주고 paragraph 는 표가 든 바깥 문단. 코어 insert_equation_native / insert_equation_in_cell_native 배선.",
+             serde_json::json!({
+                 "type": "object",
+                 "properties": {
+@@ -435,6 +435,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+                     "section": { "type": "integer", "minimum": 0 },
+                     "paragraph": { "type": "integer", "minimum": 0 },
+                     "offset": { "type": "integer", "minimum": 0 },
++                    "cellPath": { "type": "string" },
+                     "fontSize": { "type": "integer", "minimum": 1 },
+                     "color": { "type": "integer", "minimum": 0 },
+                     "output": { "type": "string" },
+@@ -448,12 +449,13 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+                 { "when": "section", "args": ["--section", "{section}"] },
+                 { "when": "paragraph", "args": ["--para", "{paragraph}"] },
+                 { "when": "offset", "args": ["--offset", "{offset}"] },
++                { "when": "cellPath", "args": ["--cell-path", "{cellPath}"] },
+                 { "when": "fontSize", "args": ["--font-size", "{fontSize}"] },
+                 { "when": "color", "args": ["--color", "{color}"] },
+                 { "when": "output", "args": ["-o", "{output}"] },
+                 { "when": "dryRun", "args": ["--dry-run"] }
+             ]),
+-            &["schemaVersion", "source", "section", "paragraph", "offset", "script", "fontSize", "color", "dryRun", "changedPages", "output", "outputFormat", "verify"],
++            &["schemaVersion", "source", "section", "paragraph", "offset", "cellPath", "script", "fontSize", "color", "dryRun", "changedPages", "output", "outputFormat", "verify"],
+         ),
+         tool_with_optional_args(
+             "hwp_delete_col",
+diff --git a/src/document_core/commands/object_ops/equation.rs b/src/document_core/commands/object_ops/equation.rs
+index a52c78bb7..1444809a1 100644
+--- a/src/document_core/commands/object_ops/equation.rs
++++ b/src/document_core/commands/object_ops/equation.rs
+@@ -150,6 +150,7 @@ impl DocumentCore {
+         control_idx: usize,
+         cell_idx: Option<usize>,
+         cell_para_idx: Option<usize>,
++        inner_control_idx: Option<usize>,
+     ) -> Result<&crate::model::control::Equation, HwpError> {
+         let section = self.document.sections.get(section_idx).ok_or_else(|| {
+             HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
+@@ -175,14 +176,20 @@ impl DocumentCore {
+             let cell_para = cell.paragraphs.get(cpi).ok_or_else(|| {
+                 HwpError::RenderError(format!("셀 문단 인덱스 {} 범위 초과", cpi))
+             })?;
+-            // 셀 문단의 첫 번째 수식 컨트롤을 찾는다
+-            cell_para
+-                .controls
+-                .iter()
+-                .find(|c| matches!(c, Control::Equation(_)))
+-                .ok_or_else(|| {
+-                    HwpError::RenderError("셀 문단에 수식 컨트롤이 없습니다".to_string())
+-                })?
++            // 셀 문단 안 몇 번째 컨트롤인지 알면 그것을, 모르면 첫 수식을 쓴다.
++            // 한 셀 문단에 수식이 여럿이면 첫 수식만 고쳐지던 문제를 막는다.
++            match inner_control_idx {
++                Some(inner) => cell_para.controls.get(inner).ok_or_else(|| {
++                    HwpError::RenderError(format!("셀 내 컨트롤 {} 범위 초과", inner))
++                })?,
++                None => cell_para
++                    .controls
++                    .iter()
++                    .find(|c| matches!(c, Control::Equation(_)))
++                    .ok_or_else(|| {
++                        HwpError::RenderError("셀 문단에 수식 컨트롤이 없습니다".to_string())
++                    })?,
++            }
+         } else {
+             // 본문 수식
+             let para = section.paragraphs.get(parent_para_idx).ok_or_else(|| {
+@@ -206,6 +213,7 @@ impl DocumentCore {
+         control_idx: usize,
+         cell_idx: Option<usize>,
+         cell_para_idx: Option<usize>,
++        inner_control_idx: Option<usize>,
+     ) -> Result<&mut crate::model::control::Equation, HwpError> {
+         let section = self.document.sections.get_mut(section_idx).ok_or_else(|| {
+             HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
+@@ -231,13 +239,18 @@ impl DocumentCore {
+             let cell_para = cell.paragraphs.get_mut(cpi).ok_or_else(|| {
+                 HwpError::RenderError(format!("셀 문단 인덱스 {} 범위 초과", cpi))
+             })?;
+-            cell_para
+-                .controls
+-                .iter_mut()
+-                .find(|c| matches!(c, Control::Equation(_)))
+-                .ok_or_else(|| {
+-                    HwpError::RenderError("셀 문단에 수식 컨트롤이 없습니다".to_string())
+-                })?
++            match inner_control_idx {
++                Some(inner) => cell_para.controls.get_mut(inner).ok_or_else(|| {
++                    HwpError::RenderError(format!("셀 내 컨트롤 {} 범위 초과", inner))
++                })?,
++                None => cell_para
++                    .controls
++                    .iter_mut()
++                    .find(|c| matches!(c, Control::Equation(_)))
++                    .ok_or_else(|| {
++                        HwpError::RenderError("셀 문단에 수식 컨트롤이 없습니다".to_string())
++                    })?,
++            }
+         } else {
+             // 본문 수식
+             let para = section.paragraphs.get_mut(parent_para_idx).ok_or_else(|| {
+@@ -337,6 +350,25 @@ impl DocumentCore {
+         control_idx: usize,
+         cell_idx: Option<usize>,
+         cell_para_idx: Option<usize>,
++    ) -> Result<String, HwpError> {
++        self.get_equation_properties_at_native(
++            section_idx,
++            parent_para_idx,
++            control_idx,
++            cell_idx,
++            cell_para_idx,
++            None,
++        )
++    }
++    /// `inner_control_idx`: 셀 안 수식이면 그 셀 문단 안 컨트롤 인덱스(없으면 첫 수식).
++    pub fn get_equation_properties_at_native(
++        &self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        control_idx: usize,
++        cell_idx: Option<usize>,
++        cell_para_idx: Option<usize>,
++        inner_control_idx: Option<usize>,
+     ) -> Result<String, HwpError> {
+         let eq = self.find_equation_ref(
+             section_idx,
+@@ -344,6 +376,7 @@ impl DocumentCore {
+             control_idx,
+             cell_idx,
+             cell_para_idx,
++            inner_control_idx,
+         )?;
+ 
+         Ok(Self::equation_properties_json(eq))
+@@ -357,6 +390,28 @@ impl DocumentCore {
+         cell_idx: Option<usize>,
+         cell_para_idx: Option<usize>,
+         props_json: &str,
++    ) -> Result<String, HwpError> {
++        self.set_equation_properties_at_native(
++            section_idx,
++            parent_para_idx,
++            control_idx,
++            cell_idx,
++            cell_para_idx,
++            None,
++            props_json,
++        )
++    }
++    /// 셀 문단 안 몇 번째 컨트롤인지(`inner_control_idx`)까지 짚어 수식 속성을 바꾼다.
++    #[allow(clippy::too_many_arguments)]
++    pub fn set_equation_properties_at_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        control_idx: usize,
++        cell_idx: Option<usize>,
++        cell_para_idx: Option<usize>,
++        inner_control_idx: Option<usize>,
++        props_json: &str,
+     ) -> Result<String, HwpError> {
+         let dpi = self.dpi;
+         let eq = self.find_equation_mut(
+@@ -365,6 +420,7 @@ impl DocumentCore {
+             control_idx,
+             cell_idx,
+             cell_para_idx,
++            inner_control_idx,
+         )?;
+         let previous_flow = (
+             eq.common.treat_as_char,
+@@ -509,7 +565,7 @@ impl DocumentCore {
+     }
+ 
+     // ─── 각주 삽입/삭제 API ──────────────────────────────
+-    /// 본문 문단에 수식을 삽입한다 (표 셀/글상자 내부는 미지원).
++    /// 본문 문단에 수식을 삽입한다 (표 셀 안은 `insert_equation_in_cell_native`).
+     /// 커서 위치에 수식 컨트롤을 추가한다.
+     /// 반환: JSON `{"ok":true, "paraIdx":N, "controlIdx":N}`
+     pub fn insert_equation_native(
+@@ -521,10 +577,6 @@ impl DocumentCore {
+         font_size: u32,
+         color: u32,
+     ) -> Result<String, HwpError> {
+-        use crate::model::control::Equation;
+-        use crate::model::shape::{CommonObjAttr, HorzRelTo, TextWrap, VertRelTo};
+-        use crate::parser::tags::CTRL_EQUATION;
+-
+         if section_idx >= self.document.sections.len() {
+             return Err(HwpError::RenderError(format!(
+                 "구역 인덱스 {} 범위 초과",
+@@ -538,6 +590,69 @@ impl DocumentCore {
+             )));
+         }
+ 
++        let equation = self.new_inline_equation(section_idx, script, font_size, color)?;
++
++        self.document.sections[section_idx].raw_stream = None;
++        let paragraph = &mut self.document.sections[section_idx].paragraphs[para_idx];
++
++        let insert_idx = {
++            let positions = crate::document_core::helpers::find_control_text_positions(paragraph);
++            let mut idx = paragraph.controls.len();
++            for (i, &pos) in positions.iter().enumerate() {
++                if pos > char_offset {
++                    idx = i;
++                    break;
++                }
++            }
++            idx
++        };
++
++        // [#3214] controls 기준 인덱스를 ctrl_data_records 에 그대로 쓰기 전에 정렬한다.
++        paragraph.align_ctrl_data_records();
++        paragraph
++            .controls
++            .insert(insert_idx, Control::Equation(Box::new(equation)));
++        paragraph.ctrl_data_records.insert(insert_idx, None);
++
++        paragraph.shift_for_inline_control_insert(insert_idx, char_offset);
++        paragraph.char_count += 8;
++        paragraph.control_mask |= 1u32 << 11;
++        paragraph.has_para_text = true;
++        self.shift_active_field_for_control_insert(section_idx, para_idx, insert_idx);
++
++        // 본문 문단 리플로우
++        // 본문 문단의 상자는 쪽 폭이 아니라 **열** 폭에서 나온다. 직접 계산하면
++        // ColumnDef(다단)·margin_gutter·가로 용지·양면 짝수쪽 여백 교환·손상
++        // PageDef 의 A4 폴백을 모두 놓친다 — 그리고 그 결과가 디스크로 나간다.
++        // 대화형 편집의 관문과 같은 한 곳을 쓴다.
++        self.reflow_paragraph(section_idx, para_idx);
++
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++        self.invalidate_page_tree_cache();
++
++        self.event_log.push(DocumentEvent::PictureInserted {
++            section: section_idx,
++            para: para_idx,
++        });
++        Ok(format!(
++            "{{\"ok\":true,\"paraIdx\":{},\"controlIdx\":{}}}",
++            para_idx, insert_idx
++        ))
++    }
++
++    /// 한컴 저장본 계약을 따르는 글자처럼 취급 수식 하나를 만든다(본문·셀 공용).
++    fn new_inline_equation(
++        &self,
++        section_idx: usize,
++        script: &str,
++        font_size: u32,
++        color: u32,
++    ) -> Result<crate::model::control::Equation, HwpError> {
++        use crate::model::control::Equation;
++        use crate::model::shape::{CommonObjAttr, HorzRelTo, TextWrap, VertRelTo};
++        use crate::parser::tags::CTRL_EQUATION;
++
+         let (width, height) = crate::renderer::equation::intrinsic_size_hwp(script, font_size);
+         let equation_order = self.document.sections[section_idx]
+             .paragraphs
+@@ -545,14 +660,28 @@ impl DocumentCore {
+             .flat_map(|paragraph| paragraph.controls.iter())
+             .filter(|control| matches!(control, Control::Equation(_)))
+             .count() as u32;
++        // 표 셀 안 수식도 센다 — 셀에 넣은 수식끼리 같은 instance ID 를 받지 않게.
++        fn count_equations(paragraphs: &[crate::model::paragraph::Paragraph]) -> usize {
++            paragraphs
++                .iter()
++                .flat_map(|paragraph| paragraph.controls.iter())
++                .map(|control| match control {
++                    Control::Equation(_) => 1,
++                    Control::Table(table) => table
++                        .cells
++                        .iter()
++                        .map(|cell| count_equations(&cell.paragraphs))
++                        .sum(),
++                    _ => 0,
++                })
++                .sum()
++        }
+         let equation_instance_order = self
+             .document
+             .sections
+             .iter()
+-            .flat_map(|section| section.paragraphs.iter())
+-            .flat_map(|paragraph| paragraph.controls.iter())
+-            .filter(|control| matches!(control, Control::Equation(_)))
+-            .count();
++            .map(|section| count_equations(&section.paragraphs))
++            .sum::<usize>();
+         // 한컴 계열 0x44 접두는 유지하되, 접두와 겹치지 않는 하위 26비트에 문서 전체
+         // 수식 순서를 배정한다. 구역 번호를 OR하면 구역 0과 64가 같은 ID가 된다.
+         let equation_instance_sequence = u32::try_from(equation_instance_order)
+@@ -563,7 +692,7 @@ impl DocumentCore {
+                 HwpError::RenderError("수식 instance ID를 더 이상 배정할 수 없습니다.".to_string())
+             })?;
+         let instance_id = 0x4400_0000 | equation_instance_sequence;
+-        let equation = Equation {
++        Ok(Equation {
+             common: CommonObjAttr {
+                 ctrl_id: CTRL_EQUATION,
+                 // 한컴 저장본의 인라인 수식 계약: 문단 기준 위치, 절대 크기,
+@@ -595,54 +724,84 @@ impl DocumentCore {
+             version_info: "Equation Version 60".to_string(),
+             font_name: "HYhwpEQ".to_string(),
+             ..Default::default()
+-        };
++        })
++    }
+ 
+-        self.document.sections[section_idx].raw_stream = None;
+-        let paragraph = &mut self.document.sections[section_idx].paragraphs[para_idx];
++    /// 표 셀(또는 글상자) 안 문단에 수식을 글자처럼 넣는다.
++    ///
++    /// `cell_path`: 바깥 문단부터 안쪽 셀 문단까지 `(controlIndex, cellIndex, cellParaIndex)`.
++    /// 반환: JSON `{"ok":true, "paraIdx":<바깥 문단>, "controlIdx":<셀 문단 안 컨트롤>}`
++    #[allow(clippy::too_many_arguments)]
++    pub fn insert_equation_in_cell_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        cell_path: &[(usize, usize, usize)],
++        char_offset: usize,
++        script: &str,
++        font_size: u32,
++        color: u32,
++    ) -> Result<String, HwpError> {
++        if cell_path.is_empty() {
++            return Err(HwpError::RenderError(
++                "셀 경로가 비어 있습니다 — 본문 수식은 insert_equation_native 를 쓴다".to_string(),
++            ));
++        }
++        if section_idx >= self.document.sections.len() {
++            return Err(HwpError::RenderError(format!(
++                "구역 인덱스 {} 범위 초과",
++                section_idx
++            )));
++        }
++        let equation = self.new_inline_equation(section_idx, script, font_size, color)?;
+ 
+         let insert_idx = {
++            let section = &mut self.document.sections[section_idx];
++            section.raw_stream = None;
++            let paragraph = Self::resolve_cell_paragraph_mut(section, parent_para_idx, cell_path)?;
+             let positions = crate::document_core::helpers::find_control_text_positions(paragraph);
+-            let mut idx = paragraph.controls.len();
+-            for (i, &pos) in positions.iter().enumerate() {
+-                if pos > char_offset {
+-                    idx = i;
+-                    break;
+-                }
+-            }
+-            idx
++            let insert_idx = positions
++                .iter()
++                .position(|&pos| pos > char_offset)
++                .unwrap_or(paragraph.controls.len());
++            paragraph.align_ctrl_data_records();
++            paragraph
++                .controls
++                .insert(insert_idx, Control::Equation(Box::new(equation)));
++            paragraph.ctrl_data_records.insert(insert_idx, None);
++            paragraph.shift_for_inline_control_insert(insert_idx, char_offset);
++            paragraph.char_count += 8;
++            paragraph.control_mask |= 1u32 << 11;
++            paragraph.has_para_text = true;
++            insert_idx
+         };
+ 
+-        // [#3214] controls 기준 인덱스를 ctrl_data_records 에 그대로 쓰기 전에 정렬한다.
+-        paragraph.align_ctrl_data_records();
+-        paragraph
+-            .controls
+-            .insert(insert_idx, Control::Equation(Box::new(equation)));
+-        paragraph.ctrl_data_records.insert(insert_idx, None);
+-
+-        paragraph.shift_for_inline_control_insert(insert_idx, char_offset);
+-        paragraph.char_count += 8;
+-        paragraph.control_mask |= 1u32 << 11;
+-        paragraph.has_para_text = true;
+-        self.shift_active_field_for_control_insert(section_idx, para_idx, insert_idx);
+-
+-        // 본문 문단 리플로우
+-        // 본문 문단의 상자는 쪽 폭이 아니라 **열** 폭에서 나온다. 직접 계산하면
+-        // ColumnDef(다단)·margin_gutter·가로 용지·양면 짝수쪽 여백 교환·손상
+-        // PageDef 의 A4 폴백을 모두 놓친다 — 그리고 그 결과가 디스크로 나간다.
+-        // 대화형 편집의 관문과 같은 한 곳을 쓴다.
+-        self.reflow_paragraph(section_idx, para_idx);
+-
++        // 셀 문단 리플로우 — 누름틀 셀 삽입과 같은 순서.
++        let outer_ctrl = cell_path[0].0;
++        let inner_para = cell_path.last().map(|entry| entry.2).unwrap_or(0);
++        self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, cell_path, inner_para);
++        self.recalculate_cell_paragraph_vpos_by_path(
++            section_idx,
++            parent_para_idx,
++            cell_path,
++            inner_para,
++            None,
++        );
++        self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
++        self.mark_section_dirty(section_idx);
+         self.recompose_section(section_idx);
+         self.paginate_if_needed();
+         self.invalidate_page_tree_cache();
+ 
+-        self.event_log.push(DocumentEvent::PictureInserted {
++        self.event_log.push(DocumentEvent::CellTextChanged {
+             section: section_idx,
+-            para: para_idx,
++            para: parent_para_idx,
++            ctrl: outer_ctrl,
++            cell: cell_path[0].1,
+         });
+         Ok(format!(
+             "{{\"ok\":true,\"paraIdx\":{},\"controlIdx\":{}}}",
+-            para_idx, insert_idx
++            parent_para_idx, insert_idx
+         ))
+     }
+ }
+@@ -652,6 +811,106 @@ mod tests {
+     use crate::document_core::DocumentCore;
+     use crate::model::control::Equation;
+ 
++    /// 표 셀 안에 수식 둘을 넣으면 셀 문단에 들어가고, 각자 자기 인덱스로 읽고·고치고·지울 수 있다.
++    /// 예전에는 셀 안 수식이 셀 문단의 첫 수식으로만 짚혀 두 번째 수식을 고칠 수 없었다.
++    #[test]
++    fn equations_in_one_cell_paragraph_are_addressed_one_by_one() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank document");
++        let created: serde_json::Value =
++            serde_json::from_str(&core.create_table_native(0, 0, 0, 1, 2).expect("table"))
++                .expect("table json");
++        let para = created["paraIdx"].as_u64().expect("table paragraph") as usize;
++        let table = created["controlIdx"].as_u64().expect("table control") as usize;
++        let path = [(table, 1, 0)];
++
++        let first: serde_json::Value = serde_json::from_str(
++            &core
++                .insert_equation_in_cell_native(0, para, &path, 0, "a over b", 1000, 0)
++                .expect("first equation"),
++        )
++        .expect("first json");
++        let second: serde_json::Value = serde_json::from_str(
++            &core
++                .insert_equation_in_cell_native(0, para, &path, 0, "x^2", 1000, 0)
++                .expect("second equation"),
++        )
++        .expect("second json");
++        assert_eq!(first["paraIdx"].as_u64(), Some(para as u64));
++        let first_idx = first["controlIdx"].as_u64().expect("first idx") as usize;
++        let second_idx = second["controlIdx"].as_u64().expect("second idx") as usize;
++        assert_ne!(first_idx, second_idx);
++
++        let read = |core: &DocumentCore, inner: usize| {
++            core.get_equation_properties_at_native(0, para, table, Some(1), Some(0), Some(inner))
++                .expect("equation properties")
++        };
++        assert!(read(&core, first_idx).contains("a over b"));
++        assert!(read(&core, second_idx).contains("x^2"));
++
++        core.set_equation_properties_at_native(
++            0,
++            para,
++            table,
++            Some(1),
++            Some(0),
++            Some(second_idx),
++            r#"{"script":"y^3"}"#,
++        )
++        .expect("edit second equation");
++        assert!(read(&core, first_idx).contains("a over b"), "첫 수식은 그대로");
++        assert!(read(&core, second_idx).contains("y^3"));
++
++        // 수식마다 instance ID 가 다르다.
++        let ids: Vec<u32> = {
++            let crate::model::control::Control::Table(t) =
++                &core.document.sections[0].paragraphs[para].controls[table]
++            else {
++                panic!("table control");
++            };
++            t.cells[1].paragraphs[0]
++                .controls
++                .iter()
++                .filter_map(|c| match c {
++                    crate::model::control::Control::Equation(eq) => Some(eq.common.instance_id),
++                    _ => None,
++                })
++                .collect()
++        };
++        assert_eq!(ids.len(), 2);
++        assert_ne!(ids[0], ids[1]);
++
++        // 쪽 개체 목록이 바깥 표와 셀 문단 안 인덱스를 함께 알린다.
++        let layout: serde_json::Value =
++            serde_json::from_str(&core.get_page_control_layout_native(0).expect("layout"))
++                .expect("layout json");
++        let mut inner: Vec<u64> = layout["controls"]
++            .as_array()
++            .expect("controls")
++            .iter()
++            .filter(|c| c["type"] == "equation")
++            .map(|c| {
++                assert_eq!(c["controlIdx"].as_u64(), Some(table as u64));
++                assert_eq!(c["cellIdx"].as_u64(), Some(1));
++                c["innerControlIdx"].as_u64().expect("innerControlIdx")
++            })
++            .collect();
++        inner.sort_unstable();
++        let mut expected = vec![first_idx as u64, second_idx as u64];
++        expected.sort_unstable();
++        assert_eq!(inner, expected);
++
++        let json_path = format!(
++            r#"[{{"controlIndex":{table},"cellIndex":1,"cellParaIndex":0}}]"#
++        );
++        core.delete_cell_equation_control_by_path_native(0, para, &json_path, second_idx)
++            .expect("delete second equation");
++        let remaining = core
++            .get_equation_properties_at_native(0, para, table, Some(1), Some(0), None)
++            .expect("first equation remains");
++        assert!(remaining.contains("a over b"));
++    }
++
+     /// 봉인이 없는 raw(파서를 거치지 않은 합성 IR·어댑터 산출)는 저장기가 원본
+     /// CTRL_HEADER 를 무조건 방출하므로, 판정 근거가 없어 종전대로 비워야 한다.
+     /// 비우지 않으면 크기/위치 편집이 저장에서 원복된다.
+diff --git a/src/document_core/commands/object_ops/table.rs b/src/document_core/commands/object_ops/table.rs
+index 20a22cf7e..64d0cc29b 100644
+--- a/src/document_core/commands/object_ops/table.rs
++++ b/src/document_core/commands/object_ops/table.rs
+@@ -1486,6 +1486,24 @@ impl DocumentCore {
+         )
+     }
+ 
++    /// 표 셀/글상자 내부 수식 삭제 (cell_path 기반). 그림 삭제와 같은 절차.
++    pub fn delete_cell_equation_control_by_path_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        cell_path_json: &str,
++        inner_control_idx: usize,
++    ) -> Result<String, HwpError> {
++        self.delete_cell_control_by_path_native(
++            section_idx,
++            parent_para_idx,
++            cell_path_json,
++            inner_control_idx,
++            |c| matches!(c, Control::Equation(_)),
++            "수식이",
++        )
++    }
++
+     /// [#6771] 표 셀/글상자 **내부 표** 삭제 (cell_path 기반).
+     ///
+     /// 공공 양식은 작성 안내문을 셀 안 1×1 표(점선 상자)로 넣어 두고 본문에 "안내 박스는
+diff --git a/src/document_core/queries/rendering.rs b/src/document_core/queries/rendering.rs
+index cad95a99f..93c1065ea 100644
+--- a/src/document_core/queries/rendering.rs
++++ b/src/document_core/queries/rendering.rs
+@@ -4109,7 +4109,11 @@ impl DocumentCore {
+                     };
+                     let cell_coords = match (eq_node.cell_index, eq_node.cell_para_index) {
+                         (Some(ci), Some(cpi)) => {
+-                            format!(",\"cellIdx\":{},\"cellParaIdx\":{}", ci, cpi)
++                            let inner = eq_node
++                                .inner_control_index
++                                .map(|i| format!(",\"innerControlIdx\":{i}"))
++                                .unwrap_or_default();
++                            format!(",\"cellIdx\":{},\"cellParaIdx\":{}{}", ci, cpi, inner)
+                         }
+                         _ => String::new(),
+                     };
+diff --git a/src/paint/builder.rs b/src/paint/builder.rs
+index f220ca049..646bc902a 100644
+--- a/src/paint/builder.rs
++++ b/src/paint/builder.rs
+@@ -1639,6 +1639,7 @@ mod tests {
+             cell_index: None,
+             cell_para_index: None,
+             note_ref: None,
++            inner_control_index: None,
+         }
+     }
+ 
+diff --git a/src/paint/json.rs b/src/paint/json.rs
+index ad1b9b8d1..d4f7fc2e6 100644
+--- a/src/paint/json.rs
++++ b/src/paint/json.rs
+@@ -5180,6 +5180,7 @@ mod tests {
+                             cell_index: None,
+                             cell_para_index: None,
+                             note_ref: None,
++                            inner_control_index: None,
+                         },
+                     ),
+                     PaintOp::placeholder(
+diff --git a/src/render_backend/scenes.rs b/src/render_backend/scenes.rs
+index daf96ca82..f5cea9e83 100644
+--- a/src/render_backend/scenes.rs
++++ b/src/render_backend/scenes.rs
+@@ -355,6 +355,7 @@ fn sample_equation_node() -> EquationNode {
+         cell_index: None,
+         cell_para_index: None,
+         note_ref: None,
++        inner_control_index: None,
+     }
+ }
+ 
+diff --git a/src/renderer/canvaskit_policy.rs b/src/renderer/canvaskit_policy.rs
+index dcac1a9d0..18065563a 100644
+--- a/src/renderer/canvaskit_policy.rs
++++ b/src/renderer/canvaskit_policy.rs
+@@ -2551,6 +2551,7 @@ mod tests {
+             cell_index: None,
+             cell_para_index: None,
+             note_ref: None,
++            inner_control_index: None,
+         }
+     }
+ 
+diff --git a/src/renderer/layout/floating_equation.rs b/src/renderer/layout/floating_equation.rs
+index 994269895..a89cf5ab6 100644
+--- a/src/renderer/layout/floating_equation.rs
++++ b/src/renderer/layout/floating_equation.rs
+@@ -66,6 +66,7 @@ impl LayoutEngine {
+                 cell_index: None,
+                 cell_para_index: None,
+                 note_ref: None,
++            inner_control_index: None,
+             }),
+             BoundingBox::new(
+                 horizontal.content_origin_x(eq_x, self.dpi),
+diff --git a/src/renderer/layout/paragraph_layout.rs b/src/renderer/layout/paragraph_layout.rs
+index a6eeaaf91..374e1d271 100755
+--- a/src/renderer/layout/paragraph_layout.rs
++++ b/src/renderer/layout/paragraph_layout.rs
+@@ -5530,6 +5530,10 @@ impl LayoutEngine {
+                             cell_index: eq_cell_idx,
+                             cell_para_index: eq_cell_para_idx,
+                             note_ref,
++                            inner_control_index: cell_ctx
++                                .as_ref()
++                                .filter(|ctx| ctx.path.len() == 1)
++                                .map(|_| tac_ci),
+                         }),
+                         BoundingBox::new(content_x, eq_y, content_width, eq_h),
+                     );
+@@ -10022,6 +10026,10 @@ impl LayoutEngine {
+                                         cell_index: eq_cell_idx,
+                                         cell_para_index: eq_cell_para_idx,
+                                         note_ref,
++                                        inner_control_index: cell_ctx
++                                            .as_ref()
++                                            .filter(|ctx| ctx.path.len() == 1)
++                                            .map(|_| tac_ci),
+                                     },
+                                 ),
+                                 BoundingBox::new(content_x, eq_y, content_width, eq_h),
+diff --git a/src/renderer/layout/shape_layout.rs b/src/renderer/layout/shape_layout.rs
+index a36f63946..f6c49aeb6 100644
+--- a/src/renderer/layout/shape_layout.rs
++++ b/src/renderer/layout/shape_layout.rs
+@@ -2842,6 +2842,7 @@ impl LayoutEngine {
+                                             cell_index: table_cell_ref.map(|(c, _, _)| c),
+                                             cell_para_index: table_cell_ref.map(|(_, p, _)| p),
+                                             note_ref: None,
++                                            inner_control_index: None,
+                                         }),
+                                         BoundingBox::new(render_x, render_y, render_w, render_h),
+                                     );
+@@ -4228,6 +4229,7 @@ impl LayoutEngine {
+                                     cell_index: None,
+                                     cell_para_index: None,
+                                     note_ref: None,
++                                    inner_control_index: None,
+                                 }),
+                                 BoundingBox::new(
+                                     crate::renderer::equation::inline_box::horizontal_metrics(eq)
+diff --git a/src/renderer/layout/table_layout.rs b/src/renderer/layout/table_layout.rs
+index 7f31f1a8f..b54d3c2b0 100644
+--- a/src/renderer/layout/table_layout.rs
++++ b/src/renderer/layout/table_layout.rs
+@@ -9227,10 +9227,11 @@ impl LayoutEngine {
+                                     font_size: font_size_px,
+                                     section_index: Some(section_index),
+                                     para_index: table_meta.map(|(pi, _)| pi),
+-                                    control_index: Some(ctrl_idx),
++                                    control_index: table_meta.map(|(_, otci)| otci).or(Some(ctrl_idx)),
+                                     cell_index: Some(cell_idx),
+                                     cell_para_index: Some(cp_idx),
+                                     note_ref: None,
++                                    inner_control_index: table_meta.map(|_| ctrl_idx),
+                                 }),
+                                 BoundingBox::new(
+                                     crate::renderer::equation::inline_box::horizontal_metrics(eq)
+diff --git a/src/renderer/layout/table_partial.rs b/src/renderer/layout/table_partial.rs
+index 7ede1cd9f..5af3842f5 100644
+--- a/src/renderer/layout/table_partial.rs
++++ b/src/renderer/layout/table_partial.rs
+@@ -4272,10 +4272,11 @@ impl LayoutEngine {
+                                         script: eq.script.clone(),
+                                         section_index: Some(section_index),
+                                         para_index: Some(para_index),
+-                                        control_index: Some(ctrl_idx),
++                                        control_index: table_meta.map(|(_, otci)| otci).or(Some(ctrl_idx)),
+                                         cell_index: Some(cell_idx),
+                                         cell_para_index: Some(cp_idx),
+                                         note_ref: None,
++                                        inner_control_index: table_meta.map(|_| ctrl_idx),
+                                     }),
+                                     BoundingBox::new(
+                     crate::renderer::equation::inline_box::horizontal_metrics(eq).content_origin_x(eq_x, self.dpi),
+diff --git a/src/renderer/render_tree.rs b/src/renderer/render_tree.rs
+index 0feb64d7f..713fc5411 100644
+--- a/src/renderer/render_tree.rs
++++ b/src/renderer/render_tree.rs
+@@ -1852,6 +1852,9 @@ pub struct EquationNode {
+     pub cell_para_index: Option<usize>,
+     /// 각주/미주 내부 수식인 경우 원본 위치
+     pub note_ref: Option<NoteControlRef>,
++    /// 깊이 1 표 셀 안 수식: 셀 문단 안 컨트롤 인덱스 (`control_index` 는 바깥 표).
++    /// 한 셀 문단에 수식이 여럿일 때 어느 수식인지 가린다.
++    pub inner_control_index: Option<usize>,
+ }
+ 
+ /// 인라인 Shape 좌표 맵 키. 섹션 단위 + 셀 경로로 셀 내 paragraph/control
+diff --git a/src/renderer/skia/renderer.rs b/src/renderer/skia/renderer.rs
+index eb42853d9..ff4fff862 100644
+--- a/src/renderer/skia/renderer.rs
++++ b/src/renderer/skia/renderer.rs
+@@ -4223,6 +4223,7 @@ mod tests {
+             cell_index: None,
+             cell_para_index: None,
+             note_ref: None,
++            inner_control_index: None,
+         };
+         let tree = PageLayerTree::new(
+             64.0,
+@@ -4271,6 +4272,7 @@ mod tests {
+             cell_index: None,
+             cell_para_index: None,
+             note_ref: None,
++            inner_control_index: None,
+         };
+         let tree = PageLayerTree::new(
+             64.0,
+diff --git a/src/wasm_api.rs b/src/wasm_api.rs
+index 84fbdb243..a3d79c851 100644
+--- a/src/wasm_api.rs
++++ b/src/wasm_api.rs
+@@ -4384,6 +4384,24 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    /// 표 셀/글상자 내부 수식 삭제 (by_path).
++    #[wasm_bindgen(js_name = deleteCellEquationControlByPath)]
++    pub fn delete_cell_equation_control_by_path(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        inner_control_idx: u32,
++    ) -> Result<String, JsValue> {
++        self.delete_cell_equation_control_by_path_native(
++            section_idx as usize,
++            parent_para_idx as usize,
++            cell_path_json,
++            inner_control_idx as usize,
++        )
++        .map_err(|e| e.into())
++    }
++
+     /// [#6771] 표 셀/글상자 내부 **표** 삭제 (by_path).
+     ///
+     /// 셀 안 1×1 안내 상자처럼 본문 리스트 밖에 있는 표를 지운다 — `deleteControlAt` 은
+@@ -4578,6 +4596,7 @@ impl HwpDocument {
+         control_idx: u32,
+         cell_idx: i32,
+         cell_para_idx: i32,
++        inner_control_idx: Option<u32>,
+     ) -> Result<String, JsValue> {
+         let ci = if cell_idx >= 0 {
+             Some(cell_idx as usize)
+@@ -4589,12 +4608,13 @@ impl HwpDocument {
+         } else {
+             None
+         };
+-        self.get_equation_properties_native(
++        self.get_equation_properties_at_native(
+             section_idx as usize,
+             parent_para_idx as usize,
+             control_idx as usize,
+             ci,
+             cpi,
++            inner_control_idx.map(|i| i as usize),
+         )
+         .map_err(|e| e.into())
+     }
+@@ -4611,6 +4631,7 @@ impl HwpDocument {
+         cell_idx: i32,
+         cell_para_idx: i32,
+         props_json: &str,
++        inner_control_idx: Option<u32>,
+     ) -> Result<String, JsValue> {
+         let ci = if cell_idx >= 0 {
+             Some(cell_idx as usize)
+@@ -4622,12 +4643,13 @@ impl HwpDocument {
+         } else {
+             None
+         };
+-        self.set_equation_properties_native(
++        self.set_equation_properties_at_native(
+             section_idx as usize,
+             parent_para_idx as usize,
+             control_idx as usize,
+             ci,
+             cpi,
++            inner_control_idx.map(|i| i as usize),
+             props_json,
+         )
+         .map_err(|e| e.into())
+@@ -5067,6 +5089,35 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    /// 표 셀 안 문단에 수식을 글자처럼 넣는다.
++    ///
++    /// `cell_path_json`: `[{"controlIndex":N,"cellIndex":N,"cellParaIndex":N}, ...]`.
++    /// 반환: `{"ok":true,"paraIdx":<바깥 문단>,"controlIdx":<셀 문단 안 컨트롤>}`
++    #[wasm_bindgen(js_name = insertEquationInCell)]
++    #[allow(clippy::too_many_arguments)]
++    pub fn insert_equation_in_cell(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        char_offset: u32,
++        script: &str,
++        font_size: u32,
++        color: u32,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.insert_equation_in_cell_native(
++            section_idx as usize,
++            parent_para_idx as usize,
++            &path,
++            char_offset as usize,
++            script,
++            font_size,
++            color,
++        )
++        .map_err(|e| e.into())
++    }
++
+     /// 한/글 5.x/97 OLE 수식을 편집 가능한 native equation으로 변환한다.
+     #[wasm_bindgen(js_name = promoteOleEquation)]
+     pub fn promote_ole_equation(
+diff --git a/tests/cases/issue_6520_svg_layer_contract.rs b/tests/cases/issue_6520_svg_layer_contract.rs
+index a89b993b4..bcfc30103 100644
+--- a/tests/cases/issue_6520_svg_layer_contract.rs
++++ b/tests/cases/issue_6520_svg_layer_contract.rs
+@@ -873,6 +873,7 @@ fn image_and_equation_control_labels_replay_as_canonical_ops() {
+                 cell_index: None,
+                 cell_para_index: None,
+                 note_ref: None,
++                inner_control_index: None,
+             }),
+             bounds,
+         ),
+diff --git a/tests/provenance_contract.rs b/tests/provenance_contract.rs
+index d60bcdb59..9ebb3c2f0 100644
+--- a/tests/provenance_contract.rs
++++ b/tests/provenance_contract.rs
+@@ -2579,6 +2579,11 @@ const CONDITIONAL_RECORD_FIELDS: &[(&str, &str, &str)] = &[
+         "color",
+         "insert-equation/apply-char-format-in-cell 전용. 스윕 레시피는 fill-fields/set-cell 이라 color 를 안 낸다",
+     ),
++    (
++        "edit",
++        "cellPath",
++        "insert-equation 전용. 스윕 레시피는 fill-fields/set-cell 이라 cellPath 를 안 낸다",
++    ),
+     (
+         "edit",
+         "x",
+-- 
+2.50.1 (Apple Git-155)
+
