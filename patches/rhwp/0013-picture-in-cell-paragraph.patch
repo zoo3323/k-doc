@@ -1,0 +1,602 @@
+From 3b207b0f407eb2a3f1a938a9e119ee5e78586347 Mon Sep 17 00:00:00 2001
+From: k-doc <k-doc@localhost>
+Date: Tue, 3 Nov 2026 11:39:39 +0900
+Subject: [PATCH] =?UTF-8?q?feat(picture):=20=ED=91=9C=20=EC=85=80=EC=97=90?=
+ =?UTF-8?q?=20=ED=81=B4=EB=A6=AD=EC=9C=BC=EB=A1=9C=20=EB=84=A3=EC=9D=80=20?=
+ =?UTF-8?q?=EA=B7=B8=EB=A6=BC=EC=9D=84=20=EC=85=80=20=EB=AC=B8=EB=8B=A8=20?=
+ =?UTF-8?q?=EC=95=88=20=EC=9E=90=EB=A6=AC=EC=B0=A8=EC=A7=80=20=EA=B7=B8?=
+ =?UTF-8?q?=EB=A6=BC=EC=9C=BC=EB=A1=9C=20=EB=84=A3=EB=8A=94=EB=8B=A4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- insert_picture_in_cell_paragraph_native / WASM insertPictureInCellParagraph: 한글 기본
+  (마우스로 크기 지정 끔)처럼 셀 문단에 앵커(문단·단 기준, 위아래)해 셀과 함께 움직인다.
+  셀 안쪽 폭보다 넓으면 비율을 지켜 줄인다.
+- studio: 셀 안 클릭은 이 경로, 드래그로 그린 그림은 예전처럼 띄운다.
+- CLI edit insert-picture --cell-path, MCP hwp_insert_picture cellPath.
+---
+ .../src/core/mutation-method-registry.ts      |   2 +-
+ rhwp-studio/src/core/wasm-bridge.ts           |  13 +
+ rhwp-studio/src/engine/input-handler-table.ts |  20 +-
+ src/cli/commands/edit/equations.rs            |   2 +-
+ src/cli/commands/edit/media.rs                |  76 ++++--
+ src/cli/metadata/help/edit.rs                 |   1 +
+ src/cli/metadata/mcp/edit_content.rs          |   6 +-
+ .../commands/object_ops/picture.rs            | 226 ++++++++++++++++++
+ src/document_core/commands/text_editing.rs    |   2 +-
+ src/wasm_api.rs                               |  37 +++
+ 10 files changed, 358 insertions(+), 27 deletions(-)
+
+diff --git a/rhwp-studio/src/core/mutation-method-registry.ts b/rhwp-studio/src/core/mutation-method-registry.ts
+index 6ae304d57..85e43114b 100755
+--- a/rhwp-studio/src/core/mutation-method-registry.ts
++++ b/rhwp-studio/src/core/mutation-method-registry.ts
+@@ -40,7 +40,7 @@ export const MUTATING_METHODS: readonly string[] = [
+   'pasteTableCellsTransposed', 'transposeTableCellsInPlace', 'pasteTableCellsTransposedAsTable',
+   'evaluateTableFormula',
+   // 그림/도형/수식 개체
+-  'insertPicture', 'assignPictureImage', 'setPictureProperties',
++  'insertPicture', 'insertPictureInCellParagraph', 'assignPictureImage', 'setPictureProperties',
+   'setHeaderFooterPictureProperties', 'setCellPicturePropertiesByPath',
+   'setCellShapePropertiesByPath', 'deletePictureControl', 'deleteCellPictureControlByPath',
+   'createShapeControl', 'setShapeProperties', 'deleteShapeControl', 'changeShapeZOrder',
+diff --git a/rhwp-studio/src/core/wasm-bridge.ts b/rhwp-studio/src/core/wasm-bridge.ts
+index d7b282852..a6f2c7aab 100644
+--- a/rhwp-studio/src/core/wasm-bridge.ts
++++ b/rhwp-studio/src/core/wasm-bridge.ts
+@@ -2717,6 +2717,19 @@ export class WasmBridge {
+     return JSON.parse((this.doc as any).insertEquation(sec, para, charOffset, script, fontSizeHwpunit, color));
+   }
+ 
++  /** 표 셀 문단 안에 자리차지 그림을 넣는다(셀 폭에 맞춰 줄임). 반환 controlIdx 는 셀 문단 안 인덱스. */
++  insertPictureInCellParagraph(
++    sec: number, parentPara: number, cellPath: CellPathLike, charOffset: number,
++    imageData: Uint8Array, width: number, height: number,
++    naturalWidthPx: number, naturalHeightPx: number, extension: string, description: string,
++  ): { ok: boolean; paraIdx: number; controlIdx: number; width: number; height: number } {
++    if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
++    return JSON.parse((this.doc as any).insertPictureInCellParagraph(
++      sec, parentPara, JSON.stringify(cellPath), charOffset, imageData,
++      width, height, naturalWidthPx, naturalHeightPx, extension, description,
++    ));
++  }
++
+   /** 표 셀 안 문단에 수식을 넣는다. 반환 controlIdx 는 셀 문단 안 인덱스. */
+   insertEquationInCell(sec: number, parentPara: number, cellPath: CellPathLike, charOffset: number, script: string, fontSizeHwpunit: number, color: number): { ok: boolean; paraIdx: number; controlIdx: number } {
+     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
+diff --git a/rhwp-studio/src/engine/input-handler-table.ts b/rhwp-studio/src/engine/input-handler-table.ts
+index a0ba01533..86b4cb2a8 100644
+--- a/rhwp-studio/src/engine/input-handler-table.ts
++++ b/rhwp-studio/src/engine/input-handler-table.ts
+@@ -653,12 +653,20 @@ export function finishImagePlacement(this: any, e: MouseEvent): void {
+   try {
+     let insertFailedMsg: string | null = null;
+     this.executeOperation({ kind: 'snapshot', operationType: 'insertPicture', operation: (wasm: WasmBridge) => {
+-      const result = wasm.insertPicture(
+-        sec, paraIdx, charOffset, cellPathJson, imgData.data,
+-        wHwp, hHwp, imgData.naturalWidth, imgData.naturalHeight,
+-        imgData.ext, desc,
+-        paperOffsetXHu, paperOffsetYHu,
+-      );
++      // 표 셀 안에서 클릭만 했으면 한글 기본처럼 셀 문단 안에 넣는다(셀과 함께 움직임).
++      // 드래그로 크기를 그렸으면 그린 자리에 띄운다(한글 「마우스로 크기 지정」).
++      const result = inCell && !drag.isDragging
++        ? wasm.insertPictureInCellParagraph(
++          sec, paraIdx, hit.cellPath, charOffset, imgData.data,
++          wHwp, hHwp, imgData.naturalWidth, imgData.naturalHeight,
++          imgData.ext, desc,
++        )
++        : wasm.insertPicture(
++          sec, paraIdx, charOffset, cellPathJson, imgData.data,
++          wHwp, hHwp, imgData.naturalWidth, imgData.naturalHeight,
++          imgData.ext, desc,
++          paperOffsetXHu, paperOffsetYHu,
++        );
+       if (!result.ok) {
+         insertFailedMsg = (result as any).error || '삽입 위치 또는 이미지 정보를 확인할 수 없습니다.';
+         console.warn('[InputHandler] 그림 삽입 실패:', result);
+diff --git a/src/cli/commands/edit/equations.rs b/src/cli/commands/edit/equations.rs
+index 871d7d68d..549328773 100644
+--- a/src/cli/commands/edit/equations.rs
++++ b/src/cli/commands/edit/equations.rs
+@@ -280,7 +280,7 @@ pub(super) fn edit_insert_equation(args: &[String]) -> i32 {
+     )
+ }
+ /// `--cell-path` JSON(`[{"controlIndex":N,"cellIndex":N,"cellParaIndex":N}, ...]`)을 읽는다.
+-fn parse_cell_path(raw: &str) -> Result<Vec<(usize, usize, usize)>, String> {
++pub(super) fn parse_cell_path(raw: &str) -> Result<Vec<(usize, usize, usize)>, String> {
+     let value: serde_json::Value =
+         serde_json::from_str(raw).map_err(|e| format!("JSON 이 아닙니다: {e}"))?;
+     let entries = value.as_array().ok_or("JSON 배열이어야 합니다.")?;
+diff --git a/src/cli/commands/edit/media.rs b/src/cli/commands/edit/media.rs
+index fba9a92fe..25af646e0 100644
+--- a/src/cli/commands/edit/media.rs
++++ b/src/cli/commands/edit/media.rs
+@@ -7,6 +7,7 @@ use std::process;
+ use rhwp::provenance;
+ use rhwp::schema_registry::ENVELOPE_SCHEMA_VERSION;
+ 
++use super::equations::parse_cell_path;
+ use super::runtime::{
+     edit_output_format, edit_serialize, edit_verify_report, finish_edit_write, EditOutputFormat,
+ };
+@@ -517,12 +518,13 @@ pub(super) fn edit_insert_image(args: &[String]) -> i32 {
+ /// `edit insert-picture` — 문단 좌표에 본문 그림을 끼운다. 코어 `insert_picture_native`.
+ /// `insert-image`(도장·서명, 쪽 좌표) 와 다르다.
+ pub(super) fn edit_insert_picture(args: &[String]) -> i32 {
+-    const USAGE: &str = "사용법: rhwp edit insert-picture <파일> --image <그림> [--section N] [--para N] [--offset N] [--width N] [--height N] [--x N] [--y N] [-o <출력>] [--dry-run] [--verify] [--json]";
++    const USAGE: &str = "사용법: rhwp edit insert-picture <파일> --image <그림> [--section N] [--para N] [--cell-path <JSON>] [--offset N] [--width N] [--height N] [--x N] [--y N] [-o <출력>] [--dry-run] [--verify] [--json]";
+     let mut file_path: Option<&str> = None;
+     let mut image_path: Option<&str> = None;
+     let mut section: usize = 0;
+     let mut para: usize = 0;
+     let mut offset: usize = 0;
++    let mut cell_path: Vec<(usize, usize, usize)> = Vec::new();
+     let mut x_hu: u32 = 0;
+     let mut y_hu: u32 = 0;
+     let mut width_arg: Option<u32> = None;
+@@ -534,6 +536,20 @@ pub(super) fn edit_insert_picture(args: &[String]) -> i32 {
+     let mut i = 0;
+     while i < args.len() {
+         match args[i].as_str() {
++            "--cell-path" => {
++                i += 1;
++                match args.get(i).map(|v| parse_cell_path(v)) {
++                    Some(Ok(path)) => cell_path = path,
++                    Some(Err(e)) => {
++                        eprintln!("오류: --cell-path {e}");
++                        return EXIT_USAGE;
++                    }
++                    None => {
++                        eprintln!("오류: --cell-path 뒤에 JSON 배열이 필요합니다.");
++                        return EXIT_USAGE;
++                    }
++                }
++            }
+             "--image" => {
+                 i += 1;
+                 match args.get(i) {
+@@ -736,21 +752,39 @@ pub(super) fn edit_insert_picture(args: &[String]) -> i32 {
+             .file_name()
+             .map(|n| n.to_string_lossy().to_string())
+             .unwrap_or_default();
+-        let inserted = match doc.insert_picture_native(
+-            section,
+-            para,
+-            offset,
+-            &[],
+-            &image_bytes,
+-            width_hu,
+-            height_hu,
+-            natural_w_px,
+-            natural_h_px,
+-            &image_ext,
+-            &description,
+-            Some(x_hu as i32),
+-            Some(y_hu as i32),
+-        ) {
++        // 표 셀 안: 셀 문단에 자리차지 그림으로 넣는다(한글 기본, 셀 폭에 맞춰 줄임).
++        let inserted = if !cell_path.is_empty() {
++            doc.insert_picture_in_cell_paragraph_native(
++                section,
++                para,
++                &cell_path,
++                offset,
++                &image_bytes,
++                width_hu,
++                height_hu,
++                natural_w_px,
++                natural_h_px,
++                &image_ext,
++                &description,
++            )
++        } else {
++            doc.insert_picture_native(
++                section,
++                para,
++                offset,
++                &[],
++                &image_bytes,
++                width_hu,
++                height_hu,
++                natural_w_px,
++                natural_h_px,
++                &image_ext,
++                &description,
++                Some(x_hu as i32),
++                Some(y_hu as i32),
++            )
++        };
++        let inserted = match inserted {
+             Ok(v) => v,
+             Err(e) => {
+                 eprintln!("오류: 그림 삽입 실패 - {e}");
+@@ -761,12 +795,14 @@ pub(super) fn edit_insert_picture(args: &[String]) -> i32 {
+             .ok()
+             .and_then(|v| v["controlIdx"].as_u64())
+             .unwrap_or_default() as usize;
++        // 셀 안 그림은 controlIdx 가 셀 문단 안 인덱스라 바깥 문단에서 찾지 않는다.
+         if let Some(rhwp::model::control::Control::Picture(picture)) = doc
+             .document()
+             .sections
+             .get(section)
+             .and_then(|s| s.paragraphs.get(para))
+             .and_then(|p| p.controls.get(ctrl_idx))
++            .filter(|_| cell_path.is_empty())
+         {
+             bin_data_id = serde_json::json!(picture.image_attr.bin_data_id);
+         }
+@@ -785,6 +821,14 @@ pub(super) fn edit_insert_picture(args: &[String]) -> i32 {
+             "section": section,
+             "paragraph": para,
+             "offset": offset,
++            "cellPath": cell_path
++                .iter()
++                .map(|&(control, cell, cell_para)| serde_json::json!({
++                    "controlIndex": control,
++                    "cellIndex": cell,
++                    "cellParaIndex": cell_para
++                }))
++                .collect::<Vec<_>>(),
+             "x": x_hu,
+             "y": y_hu,
+             "width": width_hu,
+diff --git a/src/cli/metadata/help/edit.rs b/src/cli/metadata/help/edit.rs
+index 13bbaf755..b070eb870 100644
+--- a/src/cli/metadata/help/edit.rs
++++ b/src/cli/metadata/help/edit.rs
+@@ -568,6 +568,7 @@ pub(super) fn print() {
+     println!("      --section/--para/--offset 구역·문단·문자 오프셋 (0부터, 기본 0)");
+     println!("      --x/--y <값>              용지 기준 위치 HWPUNIT (기본 0)");
+     println!("      --width/--height <값>     그림 크기 (생략: 원본 픽셀 ×75, 한쪽만: 비율 유지)");
++    println!("      --cell-path <JSON>        표 셀 안: 셀 문단에 자리차지 그림, 셀 폭에 맞춤 (--x/--y 무시)");
+     println!("      -o, --output <파일>       출력 파일 (기본: 입력명_picture.<확장자>)");
+     println!("      --dry-run/--json          형제 edit 과 같음");
+     println!();
+diff --git a/src/cli/metadata/mcp/edit_content.rs b/src/cli/metadata/mcp/edit_content.rs
+index 3ecd8bc80..688c745f5 100644
+--- a/src/cli/metadata/mcp/edit_content.rs
++++ b/src/cli/metadata/mcp/edit_content.rs
+@@ -35,7 +35,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+         ),
+         tool_with_optional_args(
+             "hwp_insert_picture",
+-            "문단 좌표(search 와 같은 section/paragraph/offset, 0 기준)에 본문 그림을 끼운다. 도장·서명용 쪽 좌표 insert-image 와 다르다. 코어 insert_picture_native 배선. 그림 바이트는 파일 그대로 넘긴다.",
++            "문단 좌표(search 와 같은 section/paragraph/offset, 0 기준)에 본문 그림을 끼운다. 표 셀 안이면 cellPath(JSON 문자열, [{controlIndex,cellIndex,cellParaIndex}])를 주고 paragraph 는 표가 든 바깥 문단 — 셀 문단 안 자리차지 그림으로 들어가 셀 폭에 맞춰 준다(x/y 무시). 도장·서명용 쪽 좌표 insert-image 와 다르다. 코어 insert_picture_native / insert_picture_in_cell_paragraph_native 배선. 그림 바이트는 파일 그대로 넘긴다.",
+             serde_json::json!({
+                 "type": "object",
+                 "properties": {
+@@ -44,6 +44,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+                     "section": { "type": "integer", "minimum": 0, "description": "구역 번호 (0부터). 생략하면 0" },
+                     "paragraph": { "type": "integer", "minimum": 0, "description": "문단 번호 (0부터). 생략하면 0" },
+                     "offset": { "type": "integer", "minimum": 0, "description": "문단 안 문자 오프셋 (0부터). 생략하면 0" },
++                    "cellPath": { "type": "string", "description": "표 셀 안에 넣을 때 셀 경로 JSON 문자열" },
+                     "x": { "type": "integer", "minimum": 0, "description": "용지 가로 위치 (HWPUNIT). 생략하면 0" },
+                     "y": { "type": "integer", "minimum": 0, "description": "용지 세로 위치 (HWPUNIT). 생략하면 0" },
+                     "width": { "type": "integer", "minimum": 1, "description": "그림 너비 (HWPUNIT). 생략하면 원본 픽셀 × 75" },
+@@ -59,6 +60,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+                 { "when": "section", "args": ["--section", "{section}"] },
+                 { "when": "paragraph", "args": ["--para", "{paragraph}"] },
+                 { "when": "offset", "args": ["--offset", "{offset}"] },
++                { "when": "cellPath", "args": ["--cell-path", "{cellPath}"] },
+                 { "when": "x", "args": ["--x", "{x}"] },
+                 { "when": "y", "args": ["--y", "{y}"] },
+                 { "when": "width", "args": ["--width", "{width}"] },
+@@ -66,7 +68,7 @@ pub(super) fn extend(tools: &mut Vec<serde_json::Value>) {
+                 { "when": "output", "args": ["-o", "{output}"] },
+                 { "when": "dryRun", "args": ["--dry-run"] }
+             ]),
+-            &["schemaVersion", "source", "image", "section", "paragraph", "offset", "x", "y", "width", "height", "binDataId", "dryRun", "changedPages", "output", "outputFormat", "verify"],
++            &["schemaVersion", "source", "image", "section", "paragraph", "offset", "cellPath", "x", "y", "width", "height", "binDataId", "dryRun", "changedPages", "output", "outputFormat", "verify"],
+         ),
+         tool_with_optional_args(
+             "hwp_delete_picture",
+diff --git a/src/document_core/commands/object_ops/picture.rs b/src/document_core/commands/object_ops/picture.rs
+index e716dbd7d..48c2e8d77 100644
+--- a/src/document_core/commands/object_ops/picture.rs
++++ b/src/document_core/commands/object_ops/picture.rs
+@@ -1440,6 +1440,162 @@ impl DocumentCore {
+         Ok(format!("{{\"ok\":true,\"binDataId\":{}}}", position_id))
+     }
+ 
++    /// 표 셀 문단 안에 그림을 넣는다 — 한글 기본(「마우스로 크기 지정」 끔)과 같다.
++    ///
++    /// 셀 문단에 앵커한 자리차지(위아래) 그림이라 셀·표와 함께 움직인다(한컴 표본
++    /// `ta-pic-cell-*.hwpx`: vertRelTo=PARA, horzRelTo=COLUMN, TOP_AND_BOTTOM). 셀 안쪽 폭보다
++    /// 넓으면 비율을 지켜 줄인다. 드래그로 그린 자리에 종이 기준으로 띄우는
++    /// `insert_picture_native` 의 셀 분기와 다르다.
++    ///
++    /// 반환: `{"ok":true,"paraIdx":<바깥 문단>,"controlIdx":<셀 문단 안 컨트롤>,"width":W,"height":H}`
++    #[allow(clippy::too_many_arguments)]
++    pub fn insert_picture_in_cell_paragraph_native(
++        &mut self,
++        section_idx: usize,
++        parent_para_idx: usize,
++        cell_path: &[(usize, usize, usize)],
++        char_offset: usize,
++        image_data: &[u8],
++        width: u32,
++        height: u32,
++        natural_width_px: u32,
++        natural_height_px: u32,
++        extension: &str,
++        description: &str,
++    ) -> Result<String, HwpError> {
++        use crate::model::image::{CropInfo, ImageAttr, ImageEffect, Picture};
++        use crate::model::shape::{
++            CommonObjAttr, HorzRelTo, ShapeComponentAttr, TextWrap, VertRelTo,
++        };
++
++        if cell_path.is_empty() {
++            return Err(HwpError::RenderError("셀 경로가 비어 있습니다".to_string()));
++        }
++        if section_idx >= self.document.sections.len() {
++            return Err(HwpError::RenderError(format!(
++                "구역 인덱스 {} 범위 초과",
++                section_idx
++            )));
++        }
++        if image_data.is_empty() {
++            return Err(HwpError::RenderError(
++                "이미지 데이터가 비어 있습니다".to_string(),
++            ));
++        }
++        if Self::cell_path_terminates_at_textbox(
++            &self.document.sections[section_idx],
++            parent_para_idx,
++            cell_path,
++        )? {
++            return Err(HwpError::RenderError(
++                "글상자 안 그림은 insert_picture_native 를 쓴다".to_string(),
++            ));
++        }
++        self.resolve_cell_by_path(section_idx, parent_para_idx, cell_path)?;
++
++        // 셀 안쪽 폭에 맞춘다(비율 유지).
++        let (mut width, mut height) = (width.max(1), height.max(1));
++        if let Some((cell_width, pad_left, pad_right)) =
++            self.resolve_innermost_cell_metrics(section_idx, parent_para_idx, cell_path)
++        {
++            let inner = (cell_width - pad_left as i32 - pad_right as i32).max(1) as u32;
++            if width > inner {
++                height = ((height as u64 * inner as u64) / width as u64).max(1) as u32;
++                width = inner;
++            }
++        }
++
++        let position_id = self.register_embedded_bin_data(image_data, extension);
++        let shape_attr = ShapeComponentAttr {
++            original_width: width,
++            original_height: height,
++            current_width: width,
++            current_height: height,
++            local_file_version: 1,
++            render_sx: 1.0,
++            render_sy: 1.0,
++            ..Default::default()
++        };
++        let mut common = CommonObjAttr {
++            ctrl_id: 0x67736F20,
++            numbering_type: crate::model::shape::ObjectNumberingType::Picture,
++            hwp5_gen_shape_attr_bit26: true,
++            treat_as_char: false,
++            flow_with_text: true,
++            vert_rel_to: VertRelTo::Para,
++            horz_rel_to: HorzRelTo::Column,
++            text_wrap: TextWrap::TopAndBottom,
++            width,
++            height,
++            z_order: 1,
++            description: description.to_string(),
++            ..Default::default()
++        };
++        common.attr = crate::serializer::control::pack_common_attr_bits(&common);
++        let pic = Picture {
++            common,
++            shape_attr,
++            border_x: [0, 0, width as i32, 0],
++            border_y: [width as i32, height as i32, 0, height as i32],
++            crop: CropInfo {
++                left: 0,
++                top: 0,
++                right: (natural_width_px * 75) as i32,
++                bottom: (natural_height_px * 75) as i32,
++            },
++            img_dim: ((natural_width_px * 75), (natural_height_px * 75)),
++            image_attr: ImageAttr {
++                bin_data_id: position_id,
++                brightness: 0,
++                contrast: 0,
++                effect: ImageEffect::RealPic,
++                transparency: 0,
++                external_path: None,
++            },
++            ..Default::default()
++        };
++
++        let new_ctrl_idx = {
++            let section = &mut self.document.sections[section_idx];
++            section.raw_stream = None;
++            let para = Self::resolve_cell_paragraph_mut(section, parent_para_idx, cell_path)?;
++            let idx = Self::control_insert_index(para, char_offset);
++            para.align_ctrl_data_records();
++            para.controls.insert(idx, Control::Picture(Box::new(pic)));
++            para.ctrl_data_records.insert(idx, None);
++            para.shift_for_inline_control_insert(idx, char_offset);
++            para.char_count += 8;
++            para.control_mask |= 0x0000_0800;
++            para.has_para_text = true;
++            idx
++        };
++
++        let outer_ctrl = cell_path[0].0;
++        let inner_para = cell_path.last().map(|entry| entry.2).unwrap_or(0);
++        self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, cell_path, inner_para);
++        self.recalculate_cell_paragraph_vpos_by_path(
++            section_idx,
++            parent_para_idx,
++            cell_path,
++            inner_para,
++            None,
++        );
++        self.mark_cell_control_dirty(section_idx, parent_para_idx, outer_ctrl);
++        self.mark_section_dirty(section_idx);
++        self.recompose_section(section_idx);
++        self.paginate_if_needed();
++        self.invalidate_page_tree_cache();
++
++        self.event_log.push(DocumentEvent::PictureInserted {
++            section: section_idx,
++            para: parent_para_idx,
++        });
++        Ok(format!(
++            "{{\"ok\":true,\"paraIdx\":{},\"controlIdx\":{},\"width\":{},\"height\":{}}}",
++            parent_para_idx, new_ctrl_idx, width, height
++        ))
++    }
++
+     /// 커서 위치에 그림을 삽입한다 (네이티브).
+     ///
+     /// - `cell_path` 가 비어있으면 본문 paragraph 에 inline (treat_as_char=true) 삽입.
+@@ -1886,6 +2042,76 @@ mod issue_1151_cell_picture_insert_tests {
+         ]
+     }
+ 
++    /// 한글 기본(마우스로 크기 지정 끔): 셀에 넣은 그림은 셀 문단 안 자리차지 그림이고,
++    /// 셀 안쪽 폭에 맞춰 줄며, 그려진 그림이 표 안에 든다(셀이 그림만큼 커진다).
++    #[test]
++    fn picture_in_cell_paragraph_stays_inside_the_cell() {
++        let mut core = DocumentCore::new_empty();
++        core.create_blank_document_native().expect("blank document");
++        let created: serde_json::Value =
++            serde_json::from_str(&core.create_table_native(0, 0, 0, 1, 2).expect("table"))
++                .expect("table json");
++        let para = created["paraIdx"].as_u64().expect("table paragraph") as usize;
++        let table = created["controlIdx"].as_u64().expect("table control") as usize;
++        let path = [(table, 1, 0)];
++
++        // 셀보다 훨씬 넓은 그림(가로 40000, 세로 20000 HWPUNIT).
++        let result: serde_json::Value = serde_json::from_str(
++            &core
++                .insert_picture_in_cell_paragraph_native(
++                    0,
++                    para,
++                    &path,
++                    0,
++                    &minimal_png(),
++                    40000,
++                    20000,
++                    1,
++                    1,
++                    "png",
++                    "cell picture",
++                )
++                .expect("insert picture in cell"),
++        )
++        .expect("result json");
++        let inner_idx = result["controlIdx"].as_u64().expect("control idx") as usize;
++        let width = result["width"].as_u64().expect("width") as u32;
++        let height = result["height"].as_u64().expect("height") as u32;
++        assert!(width < 40000, "셀 폭에 맞춰 줄어야 한다: {width}");
++        assert!((width as i64 - 2 * height as i64).abs() <= 1, "비율 2:1 유지: {width}x{height}");
++
++        let Control::Table(t) = &core.document.sections[0].paragraphs[para].controls[table] else {
++            panic!("table control");
++        };
++        let Control::Picture(pic) = &t.cells[1].paragraphs[0].controls[inner_idx] else {
++            panic!("셀 문단 안 그림");
++        };
++        assert!(!pic.common.treat_as_char);
++        assert_eq!(pic.common.vert_rel_to, crate::model::shape::VertRelTo::Para);
++        assert_eq!(pic.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom);
++        // 표 문단에는 그림이 붙지 않는다(예전 셀 분기는 표 문단 옆에 띄웠다).
++        assert_eq!(core.document.sections[0].paragraphs[para].controls.len(), table + 1);
++
++        let layout: serde_json::Value =
++            serde_json::from_str(&core.get_page_control_layout_native(0).expect("layout"))
++                .expect("layout json");
++        let controls = layout["controls"].as_array().expect("controls");
++        let table_box = controls
++            .iter()
++            .find(|c| c["type"] == "table")
++            .expect("table in layout");
++        let image_box = controls
++            .iter()
++            .find(|c| c["type"] == "image")
++            .expect("image in layout");
++        let (ty, th) = (table_box["y"].as_f64().unwrap(), table_box["h"].as_f64().unwrap());
++        let (iy, ih) = (image_box["y"].as_f64().unwrap(), image_box["h"].as_f64().unwrap());
++        assert!(
++            iy >= ty - 0.5 && iy + ih <= ty + th + 0.5,
++            "그림({iy}+{ih})이 표({ty}+{th}) 안에 그려져야 한다"
++        );
++    }
++
+     fn collect_picture_transparencies(doc: &Document) -> Vec<u8> {
+         let mut values = Vec::new();
+         for section in &doc.sections {
+diff --git a/src/document_core/commands/text_editing.rs b/src/document_core/commands/text_editing.rs
+index cb6ec5661..1e0adf2b9 100644
+--- a/src/document_core/commands/text_editing.rs
++++ b/src/document_core/commands/text_editing.rs
+@@ -3332,7 +3332,7 @@ impl DocumentCore {
+     /// [#2755] path 의 CellPathEntry 사슬을 따라 **최내곽** 셀의 폭·좌우 패딩(HWPUNIT)을
+     /// 해석한다. 마지막 엔트리를 제외한 각 엔트리에서 다음 중첩 컨트롤을 담은 컨테이너
+     /// 문단(`cell_para_idx`)으로 하강한다 — `get_cell_paragraphs_mut_by_path` 의 불변 짝이다.
+-    fn resolve_innermost_cell_metrics(
++    pub(crate) fn resolve_innermost_cell_metrics(
+         &self,
+         section_idx: usize,
+         parent_para_idx: usize,
+diff --git a/src/wasm_api.rs b/src/wasm_api.rs
+index a3d79c851..06836eebb 100644
+--- a/src/wasm_api.rs
++++ b/src/wasm_api.rs
+@@ -4050,6 +4050,43 @@ impl HwpDocument {
+         .map_err(|e| e.into())
+     }
+ 
++    /// 표 셀 문단 안에 자리차지 그림을 넣는다(한글 기본, 셀과 함께 움직임).
++    /// 셀 안쪽 폭보다 넓으면 비율을 지켜 줄인다.
++    ///
++    /// 반환: `{"ok":true,"paraIdx":<바깥 문단>,"controlIdx":<셀 문단 안 컨트롤>,"width":W,"height":H}`
++    #[wasm_bindgen(js_name = insertPictureInCellParagraph)]
++    #[allow(clippy::too_many_arguments)]
++    pub fn insert_picture_in_cell_paragraph(
++        &mut self,
++        section_idx: u32,
++        parent_para_idx: u32,
++        cell_path_json: &str,
++        char_offset: u32,
++        image_data: &[u8],
++        width: u32,
++        height: u32,
++        natural_width_px: u32,
++        natural_height_px: u32,
++        extension: &str,
++        description: &str,
++    ) -> Result<String, JsValue> {
++        let path = parse_cell_path_arg(cell_path_json)?;
++        self.insert_picture_in_cell_paragraph_native(
++            section_idx as usize,
++            parent_para_idx as usize,
++            &path,
++            char_offset as usize,
++            image_data,
++            width,
++            height,
++            natural_width_px,
++            natural_height_px,
++            extension,
++            description,
++        )
++        .map_err(|e| e.into())
++    }
++
+     /// 커서 위치에 그림을 삽입한다 (확장, options object — #1413).
+     ///
+     /// positional `insertPicture` 와 동일 동작의 얇은 어댑터. 이미지 바이너리는 별도
+-- 
+2.50.1 (Apple Git-155)
+
